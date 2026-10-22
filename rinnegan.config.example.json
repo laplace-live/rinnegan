@@ -1,0 +1,39 @@
+{
+  "logDir": "logs",
+  "reportDir": "reports",
+  "storeUrl": "sqlite:data/rinnegan.sqlite",
+  "detector": {
+    "windowMs": 600000,
+    "suspectScore": 60,
+    "spamScore": 90
+  },
+  "live": {
+    "url": "ws://localhost:8080",
+    "rooms": [25034104],
+    "includeMirror": false
+  },
+  "loginSync": {
+    "baseURL": "https://login-sync.laplace.cn",
+    "refreshMinutes": 30
+  },
+  "ban": {
+    "dryRun": false,
+    "patterns": ["loop", "burst", "template", "blend"],
+    "hours": -1,
+    "expireAfterHours": 0,
+    "reasonTemplate": "独轮车 ×{count}：{sample}",
+    "exemptUids": [],
+    "exemptGuards": false,
+    "exemptMedalLevel": 0,
+    "maxPerMinute": 5,
+    "maxPerSession": 100
+  },
+  "unbanSpendCny": 0,
+  "ai": {
+    "mode": "off",
+    "provider": "jev",
+    "protocol": "openrouter",
+    "threshold": 0.8,
+    "maxPerHour": 120
+  }
+}

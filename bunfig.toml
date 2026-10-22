@@ -1,0 +1,3 @@
+[test]
+# references/ holds private datasets, never test sources
+pathIgnorePatterns = ["references/**", "node_modules/**"]

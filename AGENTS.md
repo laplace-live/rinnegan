@@ -1,119 +1,68 @@
----
-description: Use Bun instead of Node.js, npm, pnpm, or vite.
-globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
-alwaysApply: false
----
+# AGENTS.md
 
-Default to using Bun instead of Node.js.
+Guidance for coding agents working in this repository.
 
-- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `bun test` instead of `jest` or `vitest`
-- Use `bun check` instead of `tsc --noEmit`
-- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
-- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
-- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
-- Use `bunx <package> <command>` instead of `npx <package> <command>`
-- Bun automatically loads .env, so don't use dotenv.
+## Project
 
-## APIs
+LAPLACE Rinnegan (輪廻眼) detects 独轮车 — danmaku looped by one user, usually through tools like
+[LAPLACE Chatterbox](https://laplace.live/chatterbox) — in Bilibili Live rooms.
+- **Live mode** reads `LaplaceEvent`s from LAPLACE Event Fetcher (bridge mode) or LAPLACE Event Bridge, and can ban
+  through Bilibili's official silent-user API using cookies from LAPLACE Login Sync. No login-sync token means dry-run.
+- **Offline mode** replays a LAPLACE Chat archive (`.lca`) through the same detector and ranks spammers with samples.
 
-- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
-- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
-- `Bun.redis` for Redis. Don't use `ioredis`.
-- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
-- `WebSocket` is built-in. Don't use `ws`.
-- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
-- Bun.$`ls` instead of execa.
+Layout:
 
-## Testing
+| Path            | What                                                                       |
+| --------------- | -------------------------------------------------------------------------- |
+| `src/detect/`   | Canonicalization, timing metrics, crowd index and the streaming `Detector` |
+| `src/sources/`  | `LaplaceEvent` → `ChatMessage`, `.lca` decoding, live bridge connection    |
+| `src/bilibili/` | Bilibili web APIs (silent users, nav, room init) and login-sync cookies    |
+| `src/store/`    | Persistent ban records (memory, SQLite, Postgres, Redis) and lift rules    |
+| `src/ai/`       | Optional second opinion: Jev decision model or an OpenAI-compatible LLM    |
+| `src/enforce/`  | Ban policy, exemptions, safety brake, dry-run                              |
+| `src/audit/`    | JSONL audit log                                                            |
+| `src/commands/` | `live`, `offline`, `bans`, `unban`                                         |
+| `src/cli.ts`    | Entry point                                                                |
 
-Use `bun test` to run tests.
+Detection rules are calibrated against real archives in `references/` (gitignored, never commit them). Tests that need
+them skip when the files are absent.
 
-```ts#index.test.ts
-import { test, expect } from "bun:test";
+## Commands
 
-test("hello world", () => {
-  expect(1).toBe(1);
-});
+```bash
+bun install
+bun run lint        # biome check
+bun run typecheck   # bun check
+bun test
+bun run src/cli.ts offline references/<file>.lca
 ```
 
-## Type checking
+Always run `bun run lint`, `bun run typecheck` and `bun test` before finishing.
 
-Use `bun check` to type check the project. It reads `tsconfig.json` and reports the same errors as `tsc`.
+## Runtime
 
-- `bun check src/index.ts` checks one file and what it imports
-- `bun --check src/index.ts`, `bun test --check` and `bun build --check` type check first, and do nothing else if there is an error
+Use Bun, not Node.js: `bun test`, `bun:sqlite`, `Bun.sql` (Postgres), `Bun.redis` / `RedisClient`, built-in
+`WebSocket`, `Bun.file`. Bun loads `.env` automatically, so don't use dotenv. Imports use the `@/` alias for `src/`.
 
-## Frontend
+## Code style
 
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
+Biome enforces formatting: 2 spaces, single quotes, no semicolons, trailing commas (es5), 120 columns.
 
-Server:
+### Comments
 
-```ts#index.ts
-import index from "./index.html"
+Comments must be **sparse and terse** — verbosity is the problem; a long comment is worse than no comment. One
+exception: **JSDoc/TSDoc doc-comments** (`/** … */`) attached to a declaration surface in editor hover and autocomplete
+— keep them, but keep them tight.
+- **Keep doc-comments on declarations**, one line where you can; reach for `@param`/`@returns` only to add what the
+  signature can't say (units, ranges, edge cases).
+- **Cut name-restaters elsewhere.** No inline note that merely restates a name, type or obvious operation.
+- **Keep only genuinely non-obvious information, in 1–2 lines** — an edge case, a non-obvious _why_, a workaround, an
+  invariant, units, or a gotcha.
+- **Never remove or alter** tooling directives (`@ts-expect-error`, `biome-ignore`, …) or `TODO`/`FIXME` notes.
 
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
+### Conventions
 
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
-
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
-
-With the following `frontend.tsx`:
-
-```tsx#frontend.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
-
-// import .css files directly and it works
-import './index.css';
-
-const root = createRoot(document.body);
-
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
-
-root.render(<Frontend />);
-```
-
-Then, run index.ts
-
-```sh
-bun --hot ./index.ts
-```
-
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+- User-facing console and log text is Chinese where it describes Bilibili concepts; identifiers and code comments are
+  English.
+- Never log cookies, CSRF tokens, login-sync tokens or API keys.
+- Network clients take an injectable `fetch` so tests never hit the network.
