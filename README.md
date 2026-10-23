@@ -66,7 +66,7 @@ Calibrated on a real 89,970-message archive (5,725 users) and checked against si
   bots and sticker-panel sweeps stay below it.
 - On the real archive, 42 users are judged `spam`, every one reviewed by hand (6 of them trend-following bots only the
   自动融入 replay catches); known traps (a fan who pasted a bot's line, heavy +1 users, the streamer, check-in bots) are
-  not. Detection runs at ~80k messages/s.
+  not. Detection runs at ~100k messages/s.
 
 Timing thresholds come from bootstrapping real human send gaps (200k resamples), set above the worst chance fit.
 
