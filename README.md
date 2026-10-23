@@ -100,7 +100,8 @@ Real bans are stored with time, reason, evidence and an optional expiry:
 ```
 
 Lifting runs through `BanLifecycle` with pluggable `BanRule`s (`src/store/rules.ts`): `expiryRule()`,
-`spendToUnbanRule(cny)`, or your own `onSpend` / `onTick` returning `keep`, `lift` or `extend`.
+`spendToUnbanRule(cny)`, or your own `onSpend` / `onTick` returning `keep`, `lift` or `extend`. A rule whose `onTick`
+only acts on bans past `expiresAt` can set `tickScope: 'due'`; when every rule does, ticks read only those bans.
 
 ### Admin commands
 

@@ -86,6 +86,11 @@ export interface Extracted {
   skipped: Record<string, number>
 }
 
+/** Oldest first; event id breaks timestamp ties so replays are deterministic. */
+export function compareMessages(a: ChatMessage, b: ChatMessage): number {
+  return a.timestamp - b.timestamp || a.id.localeCompare(b.id)
+}
+
 /** Every judgeable danmaku across all sheets, deduplicated by event id and sorted oldest first. */
 export function extractMessages(sheets: readonly EventSheet[], options: ExtractOptions = {}): Extracted {
   const rooms = options.rooms && options.rooms.length > 0 ? new Set(options.rooms) : null
@@ -108,6 +113,6 @@ export function extractMessages(sheets: readonly EventSheet[], options: ExtractO
       messages.push(message)
     }
   }
-  messages.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id))
+  messages.sort(compareMessages)
   return { messages, skipped }
 }

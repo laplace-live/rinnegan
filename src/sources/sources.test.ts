@@ -1,36 +1,20 @@
 import { describe, expect, test } from 'bun:test'
-import type { LaplaceEvent } from '@laplace.live/event-types'
+import type { LaplaceEvent, Message } from '@laplace.live/event-types'
 
 import { decodeArchiveText, detectArchiveFormat, extractMessages, parseArchiveJson } from '@/sources/archive'
 import { toChatMessage, toSpendEvent } from '@/sources/events'
+import { messageEvent } from '@/testing/events'
 
-function message(patch: Record<string, unknown> = {}): LaplaceEvent {
-  return {
-    type: 'message',
-    id: 'm1',
-    origin: 25034104,
-    originIdx: 0,
-    uid: 42,
-    username: 'viewer',
-    avatar: '',
-    nameColor: '',
-    message: '老公天下第一',
-    userType: 0,
-    userLvl: 0,
-    userLvlBorder: 0,
-    currentRank: 0,
-    phoneVerified: 1,
-    guardType: 3,
-    sendType: 0,
-    medal: { level: 21, name: '绿冻', room: 1, guardType: 3, lightened: 1, uid: 1, type: 0 },
-    reply: {},
-    idStr: 'x',
-    wealthMedalLevel: 23,
-    timestamp: 1_000,
-    timestampNormalized: 1_000,
-    read: false,
-    ...patch,
-  } as unknown as LaplaceEvent
+function message(patch: Record<string, unknown> = {}): Message {
+  return messageEvent(
+    { id: 'm1', roomId: 25034104, uid: 42, uname: 'viewer', text: '老公天下第一', timestamp: 1_000 },
+    {
+      guardType: 3,
+      medal: { level: 21, name: '绿冻', room: 1, guardType: 3, lightened: 1, uid: 1, type: 0 },
+      wealthMedalLevel: 23,
+      ...patch,
+    }
+  )
 }
 
 describe('toChatMessage', () => {
@@ -43,9 +27,7 @@ describe('toChatMessage', () => {
       timestamp: 1000,
       guardType: 3,
       medalLevel: 21,
-      wealthLevel: 23,
       isEmote: false,
-      isMirror: false,
     })
   })
 
@@ -59,10 +41,9 @@ describe('toChatMessage', () => {
     expect(toChatMessage(message({ uid: 0 }))).toBe('anonymous')
     expect(toChatMessage(message({ sendType: 2 }))).toBe('auto-danmaku')
     expect(toChatMessage(message({ isMirror: true }))).toBe('mirror')
-    expect(toChatMessage(message({ isMirror: true }), { includeMirror: true })).toMatchObject({ isMirror: true })
+    expect(toChatMessage(message({ isMirror: true }), { includeMirror: true })).toMatchObject({ uid: 42 })
     expect(toChatMessage(message({ message: '  ' }))).toBe('empty')
     expect(toChatMessage(message({ mock: true }))).toBe('mock')
-    expect(toChatMessage({ type: 'gift' } as LaplaceEvent)).toBe('not-message')
   })
 })
 

@@ -15,12 +15,8 @@ export interface ChatMessage {
   guardType: number
   /** Sticker danmaku; `text` is the sticker name */
   isEmote: boolean
-  /** 跨房弹幕 mirrored from a linked room */
-  isMirror: boolean
   /** Fan medal level, 0 when none is worn */
   medalLevel: number
-  /** 荣耀等级, 0 when unknown */
-  wealthLevel: number
 }
 
 /** A paid event (gift, SuperChat, guard) used by conditional unban rules. */
@@ -106,13 +102,14 @@ export interface Assessment {
   repeats: number
   /** User's messages inside the window */
   windowMessages: number
-  /** 0..1 combined automation confidence */
+  /** 0..1 confidence behind the score, repetition volume included */
   automation: number
+  /** 0..1 confidence from automation evidence alone; a `spam` verdict needs it */
+  proof: number
   evidence: Evidence[]
   clusters: ClusterSummary[]
   /** Copied from the triggering message for enforcement exemptions */
   userType: number
   guardType: number
   medalLevel: number
-  wealthLevel: number
 }

@@ -1,19 +1,22 @@
 import type { Reviewer } from '@/ai/types'
 import type { RinneganConfig } from '@/config'
-import type { BanRule, BanStore } from '@/store/types'
+import type { BanRule } from '@/store/types'
 import type { Assessment } from '@/types'
+import type { FetchLike } from '@/util/fetch'
 
 import { createReviewer, describeAiGap, resolveAiConfig } from '@/ai'
 import { AuditLog } from '@/audit/audit'
-import { BilibiliClient, CredentialProvider, credentialSummary, type FetchLike } from '@/bilibili'
+import { BilibiliClient } from '@/bilibili'
+import { connectLoginSync, openStore } from '@/commands/session'
 import { Detector } from '@/detect/detector'
-import { escapeInvisible } from '@/detect/normalize'
+import { clip, escapeInvisible } from '@/detect/normalize'
 import { Enforcer } from '@/enforce/enforcer'
 import { EVIDENCE_LABELS, PATTERN_LABELS, VERDICT_LABELS } from '@/report/labels'
-import { ConnectionState, LiveSource, maskSourceUrl } from '@/sources/live'
-import { BanLifecycle, createBanStore, describeStoreUrl, expiryRule, spendToUnbanRule } from '@/store'
-import { MemoryBanStore } from '@/store/memory'
+import { ConnectionState, LiveSource } from '@/sources/live'
+import { BanLifecycle, describeStoreUrl, expiryRule, MemoryBanStore, spendToUnbanRule } from '@/store'
 import { clock, count, fail, log, style, warn } from '@/util/console'
+import { errorMessage } from '@/util/guards'
+import { maskUrl } from '@/util/url'
 import { VERSION } from '@/version'
 
 export interface LiveOptions {
@@ -40,7 +43,7 @@ function describeAssessment(assessment: Assessment): string {
   const top = assessment.clusters[0]
   const sample = top?.samples[top.samples.length - 1]?.text ?? top?.key ?? ''
   const evidence = assessment.evidence.map(item => EVIDENCE_LABELS[item.kind]).join('、')
-  return `${assessment.uname}（${assessment.uid}）房间 ${assessment.roomId} · ${PATTERN_LABELS[assessment.pattern]} · 窗口重复 ${assessment.repeats} · ${evidence || '无自动化证据'} ·「${escapeInvisible(sample).slice(0, 30)}」`
+  return `${assessment.uname}（${assessment.uid}）房间 ${assessment.roomId} · ${PATTERN_LABELS[assessment.pattern]} · 窗口重复 ${assessment.repeats} · ${evidence || '无自动化证据'} ·「${escapeInvisible(clip(sample, 30))}」`
 }
 
 /** Watch live danmaku until SIGINT/SIGTERM. Returns the exit code. */
@@ -72,61 +75,41 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
   if (config.ban.dryRun) dryRunReason = '已指定 --dry-run'
   else if (!config.loginSync.token) dryRunReason = '未提供 LOGIN_SYNC_TOKEN'
 
-  let credentials: CredentialProvider | null = null
-  let client: BilibiliClient | null = null
-  let operatorUid: number | null = null
-  let operatorName: string | null = null
-  if (config.loginSync.token) {
-    credentials = new CredentialProvider({
-      token: config.loginSync.token,
-      baseURL: config.loginSync.baseURL,
-      authKey: config.loginSync.authKey || undefined,
-      ttlMs: config.loginSync.refreshMinutes * 60_000,
-      fetch: options.fetch,
-    })
-    const provider = credentials
-    client = new BilibiliClient({ credentials: () => provider.get(), fetch: options.fetch })
-    try {
-      const summary = credentialSummary(await provider.get())
-      const nav = await client.nav()
-      if (!nav.isLogin) throw new Error('Login Sync 中的 B 站登录已失效，请在浏览器重新登录后同步')
-      operatorUid = nav.uid
-      operatorName = nav.uname
-      log(`登录账号 ${nav.uname}（${nav.uid}）· ${summary.cookies} 个 Cookie`)
-    } catch (error) {
-      fail(`无法使用 Login Sync 凭据：${error instanceof Error ? error.message : String(error)}`)
-      audit.write('session-error', { error: error instanceof Error ? error.message : String(error) })
-      return null
-    }
+  // Independent of each other, so started together; reported in a fixed order once all have settled.
+  const anonymous = new BilibiliClient({
+    credentials: () => ({ cookie: '', csrf: '', uid: null }),
+    fetch: options.fetch,
+  })
+  const [login, resolved, store] = await Promise.all([
+    config.loginSync.token
+      ? connectLoginSync(config, options.fetch, audit).catch((error: unknown) => new Error(errorMessage(error)))
+      : null,
+    Promise.allSettled(config.live.rooms.map(room => anonymous.resolveRoom(room))),
+    dryRunReason ? new MemoryBanStore() : openStore(config, fail),
+  ])
+  if (login instanceof Error) {
+    fail(`无法使用 Login Sync 凭据：${login.message}`)
+    audit.write('session-error', { error: login.message })
+    await store?.close().catch(() => undefined)
+    return null
   }
+  const client = login?.client ?? null
+  const operatorUid = login?.nav.uid ?? null
+  const operatorName = login?.nav.uname ?? null
+  if (login) log(`登录账号 ${operatorName}（${operatorUid}）· ${login.cookies} 个 Cookie`)
 
-  const rooms: number[] = []
-  const resolver =
-    client ?? new BilibiliClient({ credentials: () => ({ cookie: '', csrf: '', uid: null }), fetch: options.fetch })
-  for (const room of config.live.rooms) {
-    try {
-      const info = await resolver.resolveRoom(room)
-      if (info.roomId !== room) log(`房间 ${room} → ${info.roomId}`)
-      rooms.push(info.roomId)
-    } catch (error) {
-      warn(`无法解析房间 ${room}（${error instanceof Error ? error.message : String(error)}），按原样使用`)
-      rooms.push(room)
+  const rooms = config.live.rooms.map((room, index) => {
+    const result = resolved[index]
+    if (result?.status === 'fulfilled') {
+      if (result.value.roomId !== room) log(`房间 ${room} → ${result.value.roomId}`)
+      return result.value.roomId
     }
-  }
+    warn(`无法解析房间 ${room}（${errorMessage(result?.reason)}），按原样使用`)
+    return room
+  })
 
-  let store: BanStore
-  if (dryRunReason) store = new MemoryBanStore()
-  else {
-    try {
-      store = await createBanStore(config.storeUrl)
-      log(`封禁记录 ${describeStoreUrl(config.storeUrl)}`)
-    } catch (error) {
-      fail(
-        `无法打开封禁记录存储 ${describeStoreUrl(config.storeUrl)}：${error instanceof Error ? error.message : String(error)}`
-      )
-      return null
-    }
-  }
+  if (!store) return null
+  if (!dryRunReason) log(`封禁记录 ${describeStoreUrl(config.storeUrl)}`)
 
   let reviewer: Reviewer | null = null
   if (config.ai.mode !== 'off') {
@@ -136,7 +119,7 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
       fail(`AI 复核配置不完整：${gap}`)
       return null
     }
-    reviewer = createReviewer(ai, { fetch: options.fetch as typeof fetch | undefined })
+    reviewer = createReviewer(ai, { fetch: options.fetch })
     log(`AI 复核 ${config.ai.mode === 'confirm' ? '（封禁前确认）' : '（辅助升级可疑用户）'} ${reviewer.label}`)
   }
 
@@ -145,7 +128,6 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
     ban: config.ban,
     dryRunReason,
     client,
-    credentials,
     store,
     audit,
     reviewer,
@@ -175,7 +157,7 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
   })
 
   if (dryRunReason) log(style.yellow(`演练模式：${dryRunReason}，只检测不封禁`))
-  const sourceUrl = maskSourceUrl(config.live.url)
+  const sourceUrl = maskUrl(config.live.url)
   log(`事件源 ${sourceUrl} · 房间 ${rooms.length ? rooms.join(', ') : '全部'}`)
   audit.write('session-start', {
     version: VERSION,
@@ -192,7 +174,8 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
     unbanSpendCny: config.unbanSpendCny,
   })
 
-  if (!dryRunReason) for (const room of rooms) await enforcer.prepareRoom(room)
+  // Not awaited: `consider()` waits for its room, and danmaku sent before the source connects are lost
+  if (!dryRunReason) for (const room of rooms) void enforcer.prepareRoom(room)
 
   let judged = 0
   let flagged = 0
@@ -208,30 +191,29 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
     onMessage: message => {
       judged++
       const { assessment, changed } = detector.ingest(message)
+      // A change always carries a flagged verdict
+      if (changed) {
+        flagged++
+        const verdict = VERDICT_LABELS[assessment.verdict]
+        if (assessment.verdict === 'spam' || options.verbose) {
+          print(
+            `${assessment.verdict === 'spam' ? style.red(verdict) : style.yellow(verdict)} ${assessment.score} ${describeAssessment(assessment)}`
+          )
+        }
+        audit.write('detection', {
+          roomId: assessment.roomId,
+          uid: assessment.uid,
+          uname: assessment.uname,
+          verdict: assessment.verdict,
+          score: assessment.score,
+          pattern: assessment.pattern,
+          repeats: assessment.repeats,
+          evidence: assessment.evidence,
+          clusters: assessment.clusters,
+        })
+      }
       // Spam re-enters enforcement on every message so a refused or braked ban is retried; it dedupes itself.
-      if (!changed) {
-        if (assessment.verdict === 'spam') void consider(assessment)
-        return
-      }
-      if (assessment.verdict !== 'none') flagged++
-      const verdict = VERDICT_LABELS[assessment.verdict]
-      if (assessment.verdict === 'spam' || options.verbose) {
-        print(
-          `${assessment.verdict === 'spam' ? style.red(verdict) : style.yellow(verdict)} ${assessment.score} ${describeAssessment(assessment)}`
-        )
-      }
-      audit.write('detection', {
-        roomId: assessment.roomId,
-        uid: assessment.uid,
-        uname: assessment.uname,
-        verdict: assessment.verdict,
-        score: assessment.score,
-        pattern: assessment.pattern,
-        repeats: assessment.repeats,
-        evidence: assessment.evidence,
-        clusters: assessment.clusters,
-      })
-      void consider(assessment)
+      if (changed || assessment.verdict === 'spam') void consider(assessment)
     },
     onSpend: event => {
       void lifecycle.handleSpend(event).catch(error => audit.write('lifecycle-error', { error: String(error) }))

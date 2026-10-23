@@ -1,12 +1,14 @@
 #!/usr/bin/env bun
 import { parseArgs } from 'node:util'
 
-import type { ConfigLayer, RinneganConfig } from '@/config'
+import type { AiConfig } from '@/ai/types'
+import type { AiMode, ConfigLayer, RinneganConfig } from '@/config'
 
 import {
   configFromEnv,
   configFromFile,
   DEFAULT_CONFIG,
+  defined,
   mergeConfig,
   parseIdList,
   parseNumber,
@@ -14,6 +16,7 @@ import {
   validateConfig,
 } from '@/config'
 import { fail, log } from '@/util/console'
+import { errorMessage } from '@/util/guards'
 import { VERSION } from '@/version'
 
 const HELP = `LAPLACE Rinnegan 輪廻眼 ${VERSION} — 识别并处置 B 站直播间的独轮车
@@ -164,67 +167,57 @@ function list(values: Values, name: string): string[] {
   return Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
 }
 
-/** CLI flags as a config layer (they override file and env). */
+/** A numeric flag; undefined when absent or empty, like the string flags. */
+function numberFlag(values: Values, name: string): number | undefined {
+  const value = str(values, name)
+  return value ? parseNumber(value, `--${name}`) : undefined
+}
+
+/** CLI flags as a config layer (they override file and env); enums are checked by `validateConfig`. */
 export function configFromFlags(values: Values): ConfigLayer {
-  const layer: ConfigLayer = {}
-  const detector: NonNullable<ConfigLayer['detector']> = {}
-  const live: NonNullable<ConfigLayer['live']> = {}
-  const loginSync: NonNullable<ConfigLayer['loginSync']> = {}
-  const ban: NonNullable<ConfigLayer['ban']> = {}
-  const ai: NonNullable<ConfigLayer['ai']> = {}
-  const number = (name: string) => {
-    const value = str(values, name)
-    return value === undefined ? undefined : parseNumber(value, `--${name}`)
+  const text = (name: string) => str(values, name) || undefined
+  const number = (name: string) => numberFlag(values, name)
+  const ids = (name: string) => {
+    const parsed = list(values, name).flatMap(value => parseIdList(value, `--${name}`))
+    return parsed.length ? parsed : undefined
   }
-
-  const rooms = list(values, 'room').flatMap(value => parseIdList(value, '--room'))
-  if (rooms.length) live.rooms = rooms
+  const on = (name: string) => (values[name] ? true : undefined)
   const windowMinutes = number('window')
-  if (windowMinutes !== undefined) detector.windowMs = windowMinutes * 60_000
-  const spamScore = number('spam-score')
-  if (spamScore !== undefined) detector.spamScore = spamScore
-  const suspectScore = number('suspect-score')
-  if (suspectScore !== undefined) detector.suspectScore = suspectScore
-  if (values['include-mirror']) live.includeMirror = true
-  if (str(values, 'log-dir')) layer.logDir = str(values, 'log-dir')
-  if (str(values, 'report-dir')) layer.reportDir = str(values, 'report-dir')
-  if (str(values, 'store')) layer.storeUrl = str(values, 'store')
-  if (str(values, 'login-sync-token')) loginSync.token = str(values, 'login-sync-token')
-  if (str(values, 'login-sync-url')) loginSync.baseURL = str(values, 'login-sync-url')
-  if (str(values, 'url')) live.url = str(values, 'url')
-  if (str(values, 'token')) live.token = str(values, 'token')
-  if (values['dry-run']) ban.dryRun = true
-  if (str(values, 'patterns')) ban.patterns = parsePatterns(str(values, 'patterns') as string)
-  const hours = number('ban-hours')
-  if (hours !== undefined) ban.hours = hours
-  const expire = number('expire-after')
-  if (expire !== undefined) ban.expireAfterHours = expire
-  if (str(values, 'reason')) ban.reasonTemplate = str(values, 'reason')
-  const exemptUids = list(values, 'exempt-uid').flatMap(value => parseIdList(value, '--exempt-uid'))
-  if (exemptUids.length) ban.exemptUids = exemptUids
-  if (values['exempt-guards']) ban.exemptGuards = true
-  const medal = number('exempt-medal')
-  if (medal !== undefined) ban.exemptMedalLevel = medal
-  const perMinute = number('max-per-minute')
-  if (perMinute !== undefined) ban.maxPerMinute = perMinute
-  const maxBans = number('max-bans')
-  if (maxBans !== undefined) ban.maxPerSession = maxBans
-  const spend = number('unban-spend')
-  if (spend !== undefined) layer.unbanSpendCny = spend
-  if (str(values, 'ai')) ai.mode = str(values, 'ai') as RinneganConfig['ai']['mode']
-  if (str(values, 'ai-provider')) ai.provider = str(values, 'ai-provider') as RinneganConfig['ai']['provider']
-  if (str(values, 'ai-protocol')) ai.protocol = str(values, 'ai-protocol') as RinneganConfig['ai']['protocol']
-  if (str(values, 'ai-model')) ai.model = str(values, 'ai-model')
-  if (str(values, 'ai-base')) ai.apiBase = str(values, 'ai-base')
-  const threshold = number('ai-threshold')
-  if (threshold !== undefined) ai.threshold = threshold
-
-  if (Object.keys(detector).length) layer.detector = detector
-  if (Object.keys(live).length) layer.live = live
-  if (Object.keys(loginSync).length) layer.loginSync = loginSync
-  if (Object.keys(ban).length) layer.ban = ban
-  if (Object.keys(ai).length) layer.ai = ai
-  return layer
+  const patterns = text('patterns')
+  const layer: ConfigLayer = {
+    logDir: text('log-dir'),
+    reportDir: text('report-dir'),
+    storeUrl: text('store'),
+    unbanSpendCny: number('unban-spend'),
+    detector: defined({
+      windowMs: windowMinutes === undefined ? undefined : windowMinutes * 60_000,
+      spamScore: number('spam-score'),
+      suspectScore: number('suspect-score'),
+    }),
+    live: defined({ url: text('url'), token: text('token'), rooms: ids('room'), includeMirror: on('include-mirror') }),
+    loginSync: defined({ token: text('login-sync-token'), baseURL: text('login-sync-url') }),
+    ban: defined({
+      dryRun: on('dry-run'),
+      patterns: patterns === undefined ? undefined : parsePatterns(patterns),
+      hours: number('ban-hours'),
+      expireAfterHours: number('expire-after'),
+      reasonTemplate: text('reason'),
+      exemptUids: ids('exempt-uid'),
+      exemptGuards: on('exempt-guards'),
+      exemptMedalLevel: number('exempt-medal'),
+      maxPerMinute: number('max-per-minute'),
+      maxPerSession: number('max-bans'),
+    }),
+    ai: defined({
+      mode: text('ai') as AiMode | undefined,
+      provider: text('ai-provider') as AiConfig['provider'] | undefined,
+      protocol: text('ai-protocol') as AiConfig['protocol'] | undefined,
+      model: text('ai-model'),
+      apiBase: text('ai-base'),
+      threshold: number('ai-threshold'),
+    }),
+  }
+  return defined(layer) ?? {}
 }
 
 async function loadConfig(values: Values): Promise<RinneganConfig> {
@@ -278,8 +271,8 @@ async function main(argv: string[]): Promise<number> {
         config,
         since: since ? parseTime(since, '--since') : undefined,
         until: until ? parseTime(until, '--until') : undefined,
-        top: str(values, 'top') ? parseNumber(str(values, 'top') as string, '--top') : 30,
-        samples: str(values, 'samples') ? parseNumber(str(values, 'samples') as string, '--samples') : 3,
+        top: numberFlag(values, 'top') ?? 30,
+        samples: numberFlag(values, 'samples') ?? 3,
         suspects: !values['spam-only'],
         writeFiles: !values['no-report'],
       })
@@ -289,7 +282,7 @@ async function main(argv: string[]): Promise<number> {
       return runLive({
         config,
         verbose: values.verbose === true,
-        statusEvery: str(values, 'status') ? parseNumber(str(values, 'status') as string, '--status') : 60,
+        statusEvery: numberFlag(values, 'status') ?? 60,
       })
     }
     case 'bans': {
@@ -306,7 +299,7 @@ async function main(argv: string[]): Promise<number> {
         room,
         remote: remote || !local,
         local: local || !remote,
-        limit: str(values, 'limit') ? parseNumber(str(values, 'limit') as string, '--limit') : 100,
+        limit: numberFlag(values, 'limit') ?? 100,
       })
     }
     case 'unban': {
@@ -327,7 +320,7 @@ if (import.meta.main) {
   try {
     process.exitCode = await main(Bun.argv.slice(2))
   } catch (error) {
-    fail(error instanceof Error ? error.message : String(error))
+    fail(errorMessage(error))
     process.exitCode = 1
   }
 }

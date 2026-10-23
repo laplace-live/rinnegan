@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
-  latticeGaps,
+  isLatticeGap,
   latticeShare,
   latticeThreshold,
   MAX_RHYTHM_GAP_MS,
@@ -9,6 +9,7 @@ import {
   measureRhythm,
   median,
   quantile,
+  scanLattice,
 } from '@/detect/timing'
 import { seededRandom } from '@/testing/simulate'
 
@@ -59,8 +60,18 @@ describe('measureRhythm', () => {
 })
 
 describe('send-tick lattice', () => {
-  test('latticeGaps keeps 1–30 s gaps', () => {
-    expect(latticeGaps(series([500, 1300, 5200, 31_000]))).toEqual([1300, 5200])
+  test('isLatticeGap keeps 1–30 s gaps', () => {
+    expect([500, 1300, 5200, 31_000].filter(isLatticeGap)).toEqual([1300, 5200])
+  })
+
+  test('the counting fit equals trying every tick', () => {
+    for (let gap = 900; gap <= 31_000; gap++) expect(measureLattice([gap])).toEqual(scanLattice([gap]))
+    for (let seed = 1; seed <= 300; seed++) {
+      const random = seededRandom(seed)
+      const gaps = Array.from({ length: 1 + Math.floor(random() * 150) }, () => 1000 + Math.floor(random() * 29_000))
+      expect(measureLattice(gaps)).toEqual(scanLattice(gaps))
+    }
+    expect(measureLattice([5200.5, 6500])).toEqual(scanLattice([5200.5, 6500]))
   })
 
   test('a throttled 1 s chatterbox loop lands on 1.3 s multiples', () => {

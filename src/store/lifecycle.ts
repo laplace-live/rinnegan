@@ -58,7 +58,10 @@ export class BanLifecycle {
     return this.#process(ban, { type: 'spend', event }, Date.now())
   }
 
-  /** Runs `onTick` rules over every active ban. A tick still in flight is joined, not repeated. */
+  /**
+   * Runs `onTick` rules over every active ban, or only the due ones when every rule is `due`-scoped. A tick still in
+   * flight is joined, not repeated.
+   */
   tick(now = Date.now()): Promise<void> {
     this.#ticking ??= this.#runTick(now).finally(() => {
       this.#ticking = null
@@ -84,7 +87,8 @@ export class BanLifecycle {
   async #runTick(now: number): Promise<void> {
     let bans: BanRecord[]
     try {
-      bans = await this.#store.listActive()
+      const dueOnly = this.#rules.every(rule => !rule.onTick || rule.tickScope === 'due')
+      bans = await (dueOnly ? this.#store.listDue(now) : this.#store.listActive())
     } catch (error) {
       this.#emit({ type: 'error', error })
       return

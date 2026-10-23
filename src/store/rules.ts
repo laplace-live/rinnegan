@@ -21,6 +21,7 @@ export function expiryRule(): BanRule {
     name: EXPIRY_RULE,
     onTick: (ban, now) =>
       ban.expiresAt !== null && ban.expiresAt <= now ? { action: 'lift', reason: 'expired' } : KEEP,
+    tickScope: 'due',
   }
 }
 

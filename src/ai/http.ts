@@ -1,3 +1,7 @@
+import type { FetchLike } from '@/util/fetch'
+
+import { errorMessage } from '@/util/guards'
+
 /** OpenRouter app attribution; harmless for other hosts. */
 export const ATTRIBUTION_HEADERS: Readonly<Record<string, string>> = {
   'HTTP-Referer': 'https://github.com/laplace-live/rinnegan',
@@ -8,21 +12,6 @@ export const ATTRIBUTION_HEADERS: Readonly<Record<string, string>> = {
 // Only the default hosts require a key; custom bases may be keyless local services.
 const KEY_REQUIRED_HOSTS = new Set(['api.typesafe.ai', 'openrouter.ai'])
 const SNIPPET_LENGTH = 200
-
-/** Any non-null object, arrays included. */
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-/** Reads `value[k0][k1]…` off untyped data; undefined once a hop isn't an object. */
-export function readPath(value: unknown, ...keys: string[]): unknown {
-  let current = value
-  for (const key of keys) {
-    if (!isRecord(current)) return undefined
-    current = current[key]
-  }
-  return current
-}
 
 /** `text` with every occurrence of `secret` masked. */
 export function redact(text: string, secret: string): string {
@@ -68,7 +57,7 @@ export interface PostJsonOptions {
   body: unknown
   timeoutMs: number
   signal?: AbortSignal
-  fetch?: typeof fetch
+  fetch?: FetchLike
 }
 
 function snippetOf(text: string, apiKey: string): string {
@@ -94,8 +83,7 @@ export async function postJson(options: PostJsonOptions): Promise<unknown> {
   const failure = (err: unknown): unknown => {
     if (signal?.aborted) return signal.reason
     if (timeout.aborted) return new Error(`${service}请求超时（${timeoutMs / 1000} 秒）`)
-    const message = err instanceof Error ? err.message : String(err)
-    return new Error(`无法连接${service}：${redact(message, apiKey)}`)
+    return new Error(`无法连接${service}：${redact(errorMessage(err), apiKey)}`)
   }
 
   let res: Response

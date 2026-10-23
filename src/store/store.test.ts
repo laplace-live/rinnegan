@@ -11,38 +11,13 @@ import { MemoryBanStore } from '@/store/memory'
 import { PostgresBanStore } from '@/store/postgres'
 import { RedisBanStore } from '@/store/redis'
 import { SqliteBanStore } from '@/store/sqlite'
+import { banRecord as ban } from '@/testing/fixtures'
 
 const PG_URL = process.env.RINNEGAN_TEST_DATABASE_URL ?? ''
 const REDIS_URL = process.env.RINNEGAN_TEST_REDIS_URL ?? ''
 
 /** 16 digits, past cjson's 14-digit precision */
 const BIG_UID = 3_493_118_437_721_017
-
-let seq = 0
-
-function ban(overrides: Partial<BanRecord> = {}): BanRecord {
-  seq++
-  return {
-    id: crypto.randomUUID(),
-    roomId: 1000,
-    uid: 2000,
-    uname: `用户${seq}`,
-    reason: '独轮车',
-    score: 92.5,
-    pattern: 'loop',
-    evidence: { evidence: [{ kind: 'periodic', weight: 0.9, detail: '每 5.0s 一条' }], clusters: [] },
-    createdAt: 1_760_000_000_000 + seq,
-    expiresAt: null,
-    hours: -1,
-    status: 'active',
-    liftedAt: null,
-    liftReason: null,
-    spend: 0,
-    operatorUid: null,
-    meta: {},
-    ...overrides,
-  }
-}
 
 function ids(bans: BanRecord[]): string[] {
   return bans.map(b => b.id)

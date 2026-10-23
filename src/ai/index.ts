@@ -32,13 +32,13 @@ export {
   REVIEW_GUIDE,
   REVIEW_REPLY_SCHEMA,
   REVIEW_SYSTEM_PROMPT,
-  revealInvisible,
 } from '@/ai/prompt'
 export {
   AiBudgetError,
   createReviewer,
   DEFAULT_AI_CONFIG,
   describeAiGap,
+  formatProbability,
   isAiProviderKind,
   resolveAiConfig,
 } from '@/ai/reviewer'

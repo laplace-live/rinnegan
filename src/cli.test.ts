@@ -3,6 +3,7 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { messageEvent } from '@/testing/events'
 import { simulateChatterboxLoop } from '@/testing/simulate'
 
 const dir = mkdtempSync(join(tmpdir(), 'rinnegan-cli-'))
@@ -49,21 +50,7 @@ describe('rinnegan CLI', () => {
       durationMs: 60_000,
       randomChar: '­',
     })
-    const events = messages.map(message => ({
-      type: 'message',
-      id: message.id,
-      origin: message.roomId,
-      uid: message.uid,
-      username: message.uname,
-      message: message.text,
-      userType: 0,
-      guardType: 0,
-      sendType: 0,
-      medal: { level: 0 },
-      wealthMedalLevel: 0,
-      timestamp: message.timestamp,
-      timestampNormalized: message.timestamp,
-    }))
+    const events = messages.map(message => messageEvent(message))
     const archive = join(dir, 'room.lca')
     await Bun.write(archive, Bun.gzipSync(new TextEncoder().encode(JSON.stringify([{ name: 'main', data: events }]))))
     const reports = join(dir, 'reports')

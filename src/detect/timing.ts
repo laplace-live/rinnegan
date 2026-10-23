@@ -2,7 +2,7 @@
 export const MAX_RHYTHM_GAP_MS = 120_000
 
 /** Sorted-input quantile with linear interpolation. */
-export function quantile(sorted: readonly number[], q: number): number {
+export function quantile(sorted: ArrayLike<number>, q: number): number {
   if (sorted.length === 0) return 0
   const index = (sorted.length - 1) * q
   const lo = Math.floor(index)
@@ -12,10 +12,7 @@ export function quantile(sorted: readonly number[], q: number): number {
 }
 
 export function median(values: readonly number[]): number {
-  return quantile(
-    [...values].sort((a, b) => a - b),
-    0.5
-  )
+  return quantile(Float64Array.from(values).sort(), 0.5)
 }
 
 /** Send-rhythm statistics for a time-ordered series. */
@@ -41,6 +38,7 @@ const TICK_MIN_MS = 1150
 const TICK_MAX_MS = 1450
 const TICK_STEP_MS = 5
 const TICK_TOLERANCE_MS = 100
+const TICK_COUNT = (TICK_MAX_MS - TICK_MIN_MS) / TICK_STEP_MS + 1
 const LATTICE_MIN_GAP_MS = 1000
 const LATTICE_MAX_GAP_MS = 30_000
 
@@ -54,15 +52,12 @@ export interface Lattice {
   share: number
 }
 
-/** Gaps between consecutive `timestamps` (ms, ascending) that a send-queue lattice can explain. */
-export function latticeGaps(timestamps: readonly number[]): number[] {
-  const gaps: number[] = []
-  for (let i = 1; i < timestamps.length; i++) {
-    const gap = (timestamps[i] as number) - (timestamps[i - 1] as number)
-    if (gap >= LATTICE_MIN_GAP_MS && gap <= LATTICE_MAX_GAP_MS) gaps.push(gap)
-  }
-  return gaps
+/** Whether a send-queue lattice can explain `gap` (ms): shorter is a burst, longer a pause. */
+export function isLatticeGap(gap: number): boolean {
+  return gap >= LATTICE_MIN_GAP_MS && gap <= LATTICE_MAX_GAP_MS
 }
+
+const tickHits = new Int32Array(TICK_COUNT)
 
 /**
  * Best fit of gaps to a k × tick lattice. A loop on chatterbox's 1 s default ticks every ~1.3 s and Bilibili drops
@@ -71,6 +66,31 @@ export function latticeGaps(timestamps: readonly number[]): number[] {
 export function measureLattice(gaps: readonly number[]): Lattice {
   let best: Lattice = { gaps: gaps.length, tickMs: 0, share: 0 }
   if (gaps.length === 0) return best
+  if (!gaps.every(Number.isInteger)) return scanLattice(gaps)
+  // Ticks are ≥ 1150 ms, so only k = round(gap / tick) can put a tick within ±100 ms of the gap: counting, per gap,
+  // the ticks inside each multiple's window gives exactly the scan's shares without trying every tick.
+  tickHits.fill(0)
+  for (const gap of gaps) {
+    const kMax = Math.floor((gap + TICK_TOLERANCE_MS) / TICK_MIN_MS)
+    for (let k = Math.max(1, Math.ceil((gap - TICK_TOLERANCE_MS) / TICK_MAX_MS)); k <= kMax; k++) {
+      const lo = Math.max(TICK_MIN_MS, Math.ceil((gap - TICK_TOLERANCE_MS) / k))
+      const hi = Math.min(TICK_MAX_MS, Math.floor((gap + TICK_TOLERANCE_MS) / k))
+      const last = Math.floor((hi - TICK_MIN_MS) / TICK_STEP_MS)
+      for (let i = Math.ceil((lo - TICK_MIN_MS) / TICK_STEP_MS); i <= last; i++) {
+        tickHits[i] = (tickHits[i] as number) + 1
+      }
+    }
+  }
+  for (let i = 0; i < TICK_COUNT; i++) {
+    const share = (tickHits[i] as number) / gaps.length
+    if (share > best.share) best = { gaps: gaps.length, tickMs: TICK_MIN_MS + i * TICK_STEP_MS, share }
+  }
+  return best
+}
+
+/** {@link measureLattice} by trying every tick; also the reference the counting version must equal. */
+export function scanLattice(gaps: readonly number[]): Lattice {
+  let best: Lattice = { gaps: gaps.length, tickMs: 0, share: 0 }
   for (let tick = TICK_MIN_MS; tick <= TICK_MAX_MS; tick += TICK_STEP_MS) {
     const share = latticeShare(gaps, tick)
     if (share > best.share) best = { gaps: gaps.length, tickMs: tick, share }
@@ -114,8 +134,7 @@ export function measureRhythm(timestamps: readonly number[]): Rhythm {
   }
   if (gaps.length === 0) return EMPTY_RHYTHM
 
-  const sorted = [...gaps].sort((a, b) => a - b)
-  const beatMs = quantile(sorted, 0.5)
+  const beatMs = quantile(Float64Array.from(gaps).sort(), 0.5)
   const mean = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length
   const variance = gaps.reduce((sum, gap) => sum + (gap - mean) ** 2, 0) / gaps.length
   const tolerance = beatTolerance(beatMs)

@@ -2,13 +2,11 @@ import type { LlmChatMessage } from '@/ai/llm'
 import type { ReviewInput } from '@/ai/types'
 import type { EvidenceKind, Pattern } from '@/types'
 
+import { clip, escapeInvisible } from '@/detect/normalize'
+
 const MAX_MESSAGES = 40
 const MAX_TEXT_LENGTH = 120
 const MAX_CLUSTERS = 3
-/** Format and default-ignorable chars, plus U+2800 which renders blank but isn't ignorable. */
-const HIDDEN_RE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u2800]/gu
-// VS16 merely selects emoji presentation; marking it would be noise.
-const VS16 = '\uFE0F'
 
 /** One suspect as both reviewer kinds see it; deliberately carries no uid. */
 export interface ReviewState {
@@ -67,21 +65,8 @@ export const REVIEW_REPLY_SCHEMA = {
   additionalProperties: false,
 }
 
-/** Replaces invisible chars (except VS16) with `⟨U+00AD⟩`-style markers so a model can see them. */
-export function revealInvisible(text: string): string {
-  return text.replace(HIDDEN_RE, char =>
-    char === VS16 ? char : `⟨U+${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}⟩`
-  )
-}
-
-/** At most `max` code points, the last one an ellipsis when cut. */
-function clip(text: string, max: number): string {
-  const chars = Array.from(text)
-  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : text
-}
-
-// Clip before revealing so a marker is never cut in half.
-const show = (text: string) => revealInvisible(clip(text, MAX_TEXT_LENGTH))
+// Marks only tool-inserted chars, the same ones the detector counts, so emoji sequences don't read as evasion.
+const show = (text: string) => escapeInvisible(clip(text, MAX_TEXT_LENGTH, '…'))
 
 function round(value: number, digits: number): number {
   const scale = 10 ** digits
@@ -92,7 +77,7 @@ function round(value: number, digits: number): number {
 export function buildReviewState(input: ReviewInput): ReviewState {
   const { assessment } = input
   return {
-    uname: show(input.uname),
+    uname: show(assessment.uname),
     messages: input.messages.slice(-MAX_MESSAGES).map(message => ({
       t: round(message.offsetSec, 1),
       text: show(message.text),

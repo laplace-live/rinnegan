@@ -1,33 +1,33 @@
 import type { Reviewer, ReviewResult } from '@/ai/types'
 import type { AuditLog } from '@/audit/audit'
-import type { BilibiliClient, CredentialProvider } from '@/bilibili'
+import type { BilibiliClient } from '@/bilibili'
 import type { ApiResult } from '@/bilibili/types'
 import type { AiMode, BanConfig } from '@/config'
+import type { BanEligibility } from '@/enforce/policy'
 import type { BanRecord, BanStore } from '@/store/types'
 import type { Assessment, Sample } from '@/types'
 
-import { isAlreadyBanned, isAuthFailure, isNotBanned } from '@/bilibili'
-import { escapeInvisible } from '@/detect/normalize'
-import { exemptionReason, formatReason } from '@/enforce/policy'
+import { formatProbability } from '@/ai'
+import { briefResult, describeResult, isAlreadyBanned, isNotBanned } from '@/bilibili'
+import { clip, escapeInvisible } from '@/detect/normalize'
+import { banEligibility, formatReason } from '@/enforce/policy'
 import { PATTERN_LABELS } from '@/report/labels'
+import { errorMessage } from '@/util/guards'
 
 /** Gap between consecutive calls to Bilibili's moderation APIs. */
-const API_GAP_MS = 1200
-/** Suspects at or above this score are offered to the reviewer in `assist` mode. */
-const ASSIST_MIN_SCORE = 75
-/** Partial automation evidence an `assist` escalation still needs; the reviewer never bans on repetition alone. */
-const ASSIST_MIN_AUTOMATION = 0.5
-/** Re-review a user only after their score climbed this much. */
+export const API_GAP_MS = 1200
+/** Re-review a vetoed user only after their score climbed this much. */
 const REVIEW_RETRY_SCORE = 10
-/** Wait before retrying a ban the API refused. */
-const FAILURE_BACKOFF_MS = 60_000
+/** Wait before retrying a ban the API refused or a review that failed. */
+const RETRY_BACKOFF_MS = 60_000
+/** How long a ban counts toward the per-room safety brake. */
+const BRAKE_WINDOW_MS = 60_000
 
 export interface EnforcerOptions {
   ban: BanConfig
   /** Why bans are simulated, or null when they are real */
   dryRunReason: string | null
   client: BilibiliClient | null
-  credentials: CredentialProvider | null
   store: BanStore
   audit: AuditLog
   reviewer: Reviewer | null
@@ -51,28 +51,53 @@ export interface EnforcerStats {
 
 type Outcome = 'banned' | 'simulated' | 'failed' | 'skipped' | 'vetoed' | 'pending'
 
+/**
+ * Where enforcement stands for one user; no entry means never acted on. `waiting` users are retried from `notBefore`
+ * on, reusing an agreeing review; `vetoed` ones are reviewed again only once their score climbs past the veto.
+ */
+type Standing =
+  | { phase: 'busy' }
+  | { phase: 'waiting'; notBefore: number; approval: ReviewResult | null }
+  | { phase: 'vetoed'; score: number }
+  | { phase: 'done' }
+
+/** What {@link liftSilentUser} lifts. */
+export interface LiftTarget {
+  roomId: number
+  uid: number
+  uname: string
+  banId: string | null
+}
+
+/** Lift a 禁言 and audit it as `unban` / `unban-failed`; Bilibili saying the user isn't banned counts as lifted. */
+export async function liftSilentUser(
+  client: BilibiliClient,
+  audit: AuditLog,
+  target: LiftTarget,
+  reason: string
+): Promise<{ ok: boolean; result: ApiResult }> {
+  const result = await client.delSilentUser(target.roomId, target.uid)
+  const ok = result.ok || isNotBanned(result)
+  audit.write(ok ? 'unban' : 'unban-failed', { ...target, reason, result: briefResult(result) })
+  return { ok, result }
+}
+
 /** Turns `spam` verdicts into bans: exemptions, de-duplication, AI review, safety brake, then the API. */
 export class Enforcer {
   readonly #options: EnforcerOptions
   readonly #now: () => number
-  /** Users already dealt with this session (`room:uid`) */
-  readonly #handled = new Set<string>()
-  readonly #inFlight = new Set<string>()
+  /** Keyed `room:uid` */
+  readonly #users = new Map<string, Standing>()
   /** Last exemption logged per user, so a skip is audited once */
   readonly #exempted = new Map<string, string>()
-  /** Score at the last review per user */
-  readonly #reviewed = new Map<string, number>()
   /** Room → uids on its silent list, when it could be read */
   readonly #remoteBanned = new Map<number, Set<number>>()
   /** Rooms this account can't moderate; bans there are simulated */
   readonly #unmanaged = new Map<number, string>()
   readonly #preparing = new Map<number, Promise<void>>()
-  /** Last refused ban per user */
-  readonly #failedAt = new Map<string, number>()
   readonly #recentBans: { roomId: number; at: number }[] = []
   #queue: Promise<unknown> = Promise.resolve()
   #lastCallAt = 0
-  #halted: string | null = null
   readonly stats: EnforcerStats = { banned: 0, simulated: 0, failed: 0, skipped: 0, reviews: 0, vetoed: 0 }
 
   constructor(options: EnforcerOptions) {
@@ -103,7 +128,7 @@ export class Enforcer {
       audit.write('room-ready', { roomId, silentUsers: users.length })
       print(`房间 ${roomId}：已读取禁言列表（${users.length} 人），封禁已启用`)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       this.#unmanaged.set(roomId, message)
       audit.write('room-unmanaged', { roomId, error: message })
       print(`房间 ${roomId}：无法读取禁言列表（${message}），当前账号可能不是主播或房管，该房间仅检测不封禁`, 'warn')
@@ -120,17 +145,20 @@ export class Enforcer {
     set.add(uid)
   }
 
-  /** Act on a changed assessment. Resolves once any ban attempt for it has finished. */
+  /**
+   * Act on an assessment. Safe to call on every message: users in flight, done or backing off are skipped. Resolves once
+   * any ban attempt has finished.
+   */
   async consider(assessment: Assessment, recent: Sample[]): Promise<Outcome> {
     const key = `${assessment.roomId}:${assessment.uid}`
-    if (this.#handled.has(key) || this.#inFlight.has(key)) return 'skipped'
-    const failedAt = this.#failedAt.get(key)
-    if (failedAt !== undefined && this.#now() - failedAt < FAILURE_BACKOFF_MS) return 'skipped'
+    const standing = this.#users.get(key)
+    if (standing?.phase === 'busy' || standing?.phase === 'done') return 'skipped'
+    if (standing?.phase === 'waiting' && this.#now() < standing.notBefore) return 'skipped'
     const { ban, aiMode, reviewer, audit } = this.#options
 
-    const exempt = exemptionReason(assessment, ban)
+    const { action, exempt } = banEligibility(assessment, ban, reviewer ? aiMode : 'off')
     if (exempt) {
-      if (assessment.verdict === 'spam' && this.#exempted.get(key) !== exempt) {
+      if (this.#exempted.get(key) !== exempt) {
         this.#exempted.set(key, exempt)
         this.stats.skipped++
         audit.write('skip', { ...identity(assessment), reason: 'exempt', detail: exempt, score: assessment.score })
@@ -138,72 +166,74 @@ export class Enforcer {
       }
       return 'skipped'
     }
+    if (!action) return 'skipped'
+    if (action === 'review' && standing?.phase === 'vetoed' && assessment.score < standing.score + REVIEW_RETRY_SCORE) {
+      return 'skipped'
+    }
+    const approval = standing?.phase === 'waiting' ? standing.approval : null
+    if (this.#braked(key, assessment, approval)) return 'pending'
 
-    const automation = proofOf(assessment)
-    const assist =
-      aiMode === 'assist' &&
-      reviewer !== null &&
-      assessment.verdict === 'suspect' &&
-      assessment.score >= ASSIST_MIN_SCORE &&
-      automation >= ASSIST_MIN_AUTOMATION
-    if (assessment.verdict !== 'spam' && !assist) return 'skipped'
-
-    this.#inFlight.add(key)
+    this.#users.set(key, { phase: 'busy' })
     try {
-      await this.prepareRoom(assessment.roomId)
-      if (this.#remoteBanned.get(assessment.roomId)?.has(assessment.uid)) {
-        return this.#skip(key, assessment, 'already-banned', '已在禁言列表中')
-      }
-      const active = await this.#options.store.findActive(assessment.roomId, assessment.uid).catch(() => null)
-      if (active) return this.#skip(key, assessment, 'already-banned', `已有封禁记录 ${active.id}`)
-
-      const needsReview = reviewer !== null && (aiMode === 'confirm' || assist)
-      let review: ReviewResult | null = null
-      if (needsReview) {
-        const last = this.#reviewed.get(key)
-        if (last !== undefined && assessment.score < last + REVIEW_RETRY_SCORE) return 'skipped'
-        this.#reviewed.set(key, assessment.score)
-        review = await this.#review(assessment, recent)
-        if (!review) return 'skipped'
-        if (!review.agrees) {
-          this.stats.vetoed++
-          audit.write('veto', { ...identity(assessment), score: assessment.score, review })
-          this.#options.print(
-            `AI 未确认 ${label(assessment)}：${(review.probability * 100).toFixed(0)}%，${review.reason}`,
-            'warn'
-          )
-          return 'vetoed'
-        }
-      }
-
-      const brake = this.#brake(assessment.roomId)
-      if (brake) {
-        audit.write('brake', { ...identity(assessment), score: assessment.score, reason: brake })
-        this.#options.print(`安全刹车：${brake}，未封禁 ${label(assessment)}`, 'warn')
-        return 'pending'
-      }
-      return await this.#ban(key, assessment, review)
+      return await this.#enforce(key, assessment, recent, action, approval)
     } finally {
-      this.#inFlight.delete(key)
+      if (this.#users.get(key)?.phase === 'busy') this.#users.delete(key)
     }
   }
 
-  #skip(key: string, assessment: Assessment, reason: string, detail: string): Outcome {
-    this.#handled.add(key)
+  async #enforce(
+    key: string,
+    assessment: Assessment,
+    recent: Sample[],
+    action: NonNullable<BanEligibility['action']>,
+    approval: ReviewResult | null
+  ): Promise<Outcome> {
+    const { reviewer, audit, print } = this.#options
+    await this.prepareRoom(assessment.roomId)
+    if (this.#remoteBanned.get(assessment.roomId)?.has(assessment.uid)) {
+      return this.#alreadyBanned(key, assessment, '已在禁言列表中')
+    }
+    const active = await this.#options.store.findActive(assessment.roomId, assessment.uid).catch(() => null)
+    if (active) return this.#alreadyBanned(key, assessment, `已有封禁记录 ${active.id}`)
+
+    let review = approval
+    if (action === 'review' && reviewer && !review) {
+      review = await this.#review(reviewer, assessment, recent)
+      if (!review) {
+        this.#users.set(key, { phase: 'waiting', notBefore: this.#now() + RETRY_BACKOFF_MS, approval: null })
+        return 'skipped'
+      }
+      if (!review.agrees) {
+        this.#users.set(key, { phase: 'vetoed', score: assessment.score })
+        this.stats.vetoed++
+        audit.write('veto', { ...identity(assessment), score: assessment.score, review })
+        print(`AI 未确认 ${label(assessment)}：${formatProbability(review.probability)}，${review.reason}`, 'warn')
+        return 'vetoed'
+      }
+    }
+    // Again: other bans may have landed while this one awaited
+    if (this.#braked(key, assessment, review)) return 'pending'
+    return this.#ban(key, assessment, review)
+  }
+
+  #alreadyBanned(key: string, assessment: Assessment, detail: string): Outcome {
+    this.#users.set(key, { phase: 'done' })
     this.stats.skipped++
-    this.#options.audit.write('skip', { ...identity(assessment), reason, detail, score: assessment.score })
+    this.#options.audit.write('skip', {
+      ...identity(assessment),
+      reason: 'already-banned',
+      detail,
+      score: assessment.score,
+    })
     return 'skipped'
   }
 
-  async #review(assessment: Assessment, recent: Sample[]): Promise<ReviewResult | null> {
-    const { reviewer, audit, print } = this.#options
-    if (!reviewer) return null
+  async #review(reviewer: Reviewer, assessment: Assessment, recent: Sample[]): Promise<ReviewResult | null> {
+    const { audit, print } = this.#options
     const first = recent[0]?.timestamp ?? assessment.at
     this.stats.reviews++
     try {
       const review = await reviewer.review({
-        uname: assessment.uname,
-        roomId: assessment.roomId,
         messages: recent.map(sample => ({
           offsetSec: Math.round((sample.timestamp - first) / 100) / 10,
           text: sample.text,
@@ -213,28 +243,38 @@ export class Enforcer {
       audit.write('review', { ...identity(assessment), score: assessment.score, review })
       return review
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorMessage(error)
       audit.write('review-error', { ...identity(assessment), error: message })
       print(`AI 复核失败 ${label(assessment)}：${message}，本次不封禁`, 'warn')
       return null
     }
   }
 
-  /** Why bans must pause right now, or null. */
-  #brake(roomId: number): string | null {
+  /** When the safety brake is on, park the user until it lifts (audited once per wait) and return true. */
+  #braked(key: string, assessment: Assessment, approval: ReviewResult | null): boolean {
+    const brake = this.#brake(assessment.roomId)
+    if (!brake) return false
+    this.#users.set(key, { phase: 'waiting', notBefore: brake.until, approval })
+    this.#options.audit.write('brake', { ...identity(assessment), score: assessment.score, reason: brake.reason })
+    this.#options.print(`安全刹车：${brake.reason}，未封禁 ${label(assessment)}`, 'warn')
+    return true
+  }
+
+  /** Why bans must pause and until when (forever once the session cap is hit), or null. */
+  #brake(roomId: number): { reason: string; until: number } | null {
     const { ban } = this.#options
-    if (this.#halted) return this.#halted
     const total = this.stats.banned + this.stats.simulated
     if (total >= ban.maxPerSession) {
-      this.#halted = `本次运行已封禁 ${total} 人，达到上限 ${ban.maxPerSession}`
-      return this.#halted
+      return { reason: `本次运行已封禁 ${total} 人，达到上限 ${ban.maxPerSession}`, until: Number.POSITIVE_INFINITY }
     }
     const now = this.#now()
-    while (this.#recentBans.length && now - (this.#recentBans[0] as { at: number }).at > 60_000)
+    while (this.#recentBans.length && now - (this.#recentBans[0] as { at: number }).at >= BRAKE_WINDOW_MS) {
       this.#recentBans.shift()
-    const lastMinute = this.#recentBans.filter(item => item.roomId === roomId).length
-    if (lastMinute >= ban.maxPerMinute) return `房间 ${roomId} 一分钟内已封禁 ${lastMinute} 人`
-    return null
+    }
+    const inRoom = this.#recentBans.filter(item => item.roomId === roomId)
+    const oldest = inRoom[0]
+    if (!oldest || inRoom.length < ban.maxPerMinute) return null
+    return { reason: `房间 ${roomId} 一分钟内已封禁 ${inRoom.length} 人`, until: oldest.at + BRAKE_WINDOW_MS }
   }
 
   async #ban(key: string, assessment: Assessment, review: ReviewResult | null): Promise<Outcome> {
@@ -256,30 +296,24 @@ export class Enforcer {
     this.#recentBans.push({ roomId: assessment.roomId, at: this.#now() })
 
     if (simulated || !client) {
-      this.#handled.add(key)
+      this.#users.set(key, { phase: 'done' })
       this.stats.simulated++
       audit.write('ban', { ...entry, dryRun: true, dryRunReason: simulated ?? 'no client' })
       print(`[演练] 将封禁 ${label(assessment)} · ${reason}`, 'ban')
       return 'simulated'
     }
 
-    let result = await this.#call(() => client.addSilentUser(assessment.roomId, assessment.uid, reason, ban.hours))
-    if (!result.ok && isAuthFailure(result) && this.#options.credentials) {
-      this.#options.credentials.invalidate()
-      audit.write('credentials-refresh', { reason: `${result.code} ${result.message}` })
-      result = await this.#call(() => client.addSilentUser(assessment.roomId, assessment.uid, reason, ban.hours))
-    }
-    const already = !result.ok && isAlreadyBanned(result)
+    const result = await this.#call(() => client.addSilentUser(assessment.roomId, assessment.uid, reason, ban.hours))
+    const already = isAlreadyBanned(result)
     if (!result.ok && !already) {
-      this.#failedAt.set(key, this.#now())
+      this.#users.set(key, { phase: 'waiting', notBefore: this.#now() + RETRY_BACKOFF_MS, approval: review })
       this.stats.failed++
-      audit.write('ban-failed', { ...entry, result: brief(result) })
-      print(`封禁失败 ${label(assessment)}：${result.code} ${result.message}`, 'error')
+      audit.write('ban-failed', { ...entry, result: briefResult(result) })
+      print(`封禁失败 ${label(assessment)}：${describeResult(result)}`, 'error')
       return 'failed'
     }
 
-    this.#handled.add(key)
-    this.#failedAt.delete(key)
+    this.#users.set(key, { phase: 'done' })
     this.noteBlocked(assessment.roomId, assessment.uid)
     this.stats.banned++
     const now = this.#now()
@@ -305,14 +339,20 @@ export class Enforcer {
     try {
       await this.#options.store.add(record)
     } catch (error) {
-      audit.write('store-error', { banId: record.id, error: error instanceof Error ? error.message : String(error) })
+      audit.write('store-error', { banId: record.id, error: errorMessage(error) })
     }
-    audit.write('ban', { ...entry, dryRun: false, banId: record.id, alreadyBanned: already, result: brief(result) })
+    audit.write('ban', {
+      ...entry,
+      dryRun: false,
+      banId: record.id,
+      alreadyBanned: already,
+      result: briefResult(result),
+    })
     print(`已封禁 ${label(assessment)} · ${reason}${already ? '（此前已被禁言）' : ''}`, 'ban')
     return 'banned'
   }
 
-  /** Lift a ban through Bilibili; used by the ban lifecycle (expiry, spend rules) and the `unban` command. */
+  /** Lift a ban through Bilibili for the ban lifecycle (expiry, spend rules); the user may be banned again later. */
   readonly lift = async (record: BanRecord, reason: string): Promise<boolean> => {
     const { client, audit, print } = this.#options
     if (!client || this.dryRun) {
@@ -320,22 +360,14 @@ export class Enforcer {
       print(`[演练] 将解除 ${record.uname}（${record.uid}）的禁言：${reason}`)
       return false
     }
-    const result = await this.#call(() => client.delSilentUser(record.roomId, record.uid))
-    const ok = result.ok || isNotBanned(result)
-    audit.write(ok ? 'unban' : 'unban-failed', {
-      roomId: record.roomId,
-      uid: record.uid,
-      uname: record.uname,
-      banId: record.id,
-      reason,
-      result: brief(result),
-    })
+    const target = { roomId: record.roomId, uid: record.uid, uname: record.uname, banId: record.id }
+    const { ok, result } = await this.#call(() => liftSilentUser(client, audit, target, reason))
     if (ok) {
       this.#remoteBanned.get(record.roomId)?.delete(record.uid)
-      this.#handled.delete(`${record.roomId}:${record.uid}`)
+      this.#users.delete(`${record.roomId}:${record.uid}`)
       print(`已解除 ${record.uname}（${record.uid}）在房间 ${record.roomId} 的禁言：${reason}`)
     } else {
-      print(`解除禁言失败 ${record.uname}（${record.uid}）：${result.code} ${result.message}`, 'error')
+      print(`解除禁言失败 ${record.uname}（${record.uid}）：${describeResult(result)}`, 'error')
     }
     return ok
   }
@@ -356,21 +388,11 @@ export class Enforcer {
   }
 }
 
-function proofOf(assessment: Assessment): number {
-  let miss = 1
-  for (const item of assessment.evidence) if (item.kind !== 'volume') miss *= 1 - item.weight
-  return 1 - miss
-}
-
 function identity(assessment: Assessment): { roomId: number; uid: number; uname: string } {
   return { roomId: assessment.roomId, uid: assessment.uid, uname: assessment.uname }
 }
 
 function label(assessment: Assessment): string {
   const sample = assessment.clusters[0]?.samples[0]?.text ?? ''
-  return `${assessment.uname}（${assessment.uid}）${PATTERN_LABELS[assessment.pattern]} ${assessment.score}「${escapeInvisible(sample).slice(0, 24)}」`
-}
-
-function brief(result: ApiResult): { ok: boolean; code: number; message: string; status: number } {
-  return { ok: result.ok, code: result.code, message: result.message, status: result.status }
+  return `${assessment.uname}（${assessment.uid}）${PATTERN_LABELS[assessment.pattern]} ${assessment.score}「${escapeInvisible(clip(sample, 24))}」`
 }

@@ -6,8 +6,8 @@ import type {
 } from '@laplace.live/login-sync'
 import { isLoginSyncError, LoginSyncClient, parseToken } from '@laplace.live/login-sync'
 
-import type { FetchLike } from '@/bilibili/client'
 import type { BilibiliCredentials } from '@/bilibili/types'
+import type { FetchLike } from '@/util/fetch'
 
 /** Where and how to pull a LAPLACE Login Sync blob. */
 export interface LoadCredentialsOptions {

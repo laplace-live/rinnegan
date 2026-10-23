@@ -26,8 +26,6 @@ export interface AiConfig {
 
 /** What a reviewer sees about one suspect. */
 export interface ReviewInput {
-  uname: string
-  roomId: number
   /** The user's recent messages, oldest first; `offsetSec` is relative to the first */
   messages: { offsetSec: number; text: string }[]
   assessment: Assessment

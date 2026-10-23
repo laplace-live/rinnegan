@@ -2,34 +2,13 @@ import { afterEach, describe, expect, test } from 'bun:test'
 
 import type { ChatMessage, SpendEvent } from '@/types'
 
-import { buildSourceUrl, LiveSource, maskSourceUrl } from '@/sources/live'
+import { buildSourceUrl, LiveSource } from '@/sources/live'
+import { messageEvent } from '@/testing/events'
 import { type FakeBridge, startFakeBridge } from '@/testing/fake-bridge'
+import { until } from '@/testing/wait'
 
-function danmaku(id: string, origin: number, uid: number, text: string) {
-  return {
-    type: 'message',
-    id,
-    origin,
-    originIdx: 0,
-    uid,
-    username: `u${uid}`,
-    message: text,
-    userType: 0,
-    guardType: 0,
-    sendType: 0,
-    medal: { level: 0 },
-    wealthMedalLevel: 0,
-    timestamp: Date.now(),
-    timestampNormalized: Date.now(),
-  }
-}
-
-async function until(check: () => boolean, timeoutMs = 3000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (!check()) {
-    if (Date.now() > deadline) throw new Error('timed out')
-    await Bun.sleep(10)
-  }
+function danmaku(id: string, roomId: number, uid: number, text: string) {
+  return messageEvent({ id, roomId, uid, uname: `u${uid}`, text, timestamp: Date.now() })
 }
 
 describe('source URLs', () => {
@@ -37,10 +16,6 @@ describe('source URLs', () => {
     expect(buildSourceUrl('ws://lef:8080/', [25034104, 456117])).toBe('ws://lef:8080/?rooms=25034104%2C456117')
     expect(buildSourceUrl('wss://lef.example/path?x=1', [])).toBe('wss://lef.example/path?x=1')
     expect(() => buildSourceUrl('http://lef:8080', [])).toThrow('ws://')
-  })
-
-  test('masks tokens for display', () => {
-    expect(maskSourceUrl('ws://lef:8080/?token=secret&rooms=1')).toBe('ws://lef:8080/?token=***&rooms=1')
   })
 })
 

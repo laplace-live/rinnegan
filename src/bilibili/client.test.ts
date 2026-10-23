@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
-import type { BilibiliClientOptions, FetchLike } from '@/bilibili/client'
+import type { BilibiliClientOptions } from '@/bilibili/client'
 import type { ApiResult, BilibiliCredentials } from '@/bilibili/types'
+import type { FetchCall } from '@/testing/fetch'
 
 import {
   BAD_RESPONSE,
@@ -16,6 +17,7 @@ import {
   NO_CREDENTIALS,
   normalizeReason,
 } from '@/bilibili/client'
+import { hang, only, recordingFetch } from '@/testing/fetch'
 
 const ROOM = 456117
 const UID = 3493260125276695
@@ -27,31 +29,12 @@ const CREDENTIALS: BilibiliCredentials = {
 }
 const OK = { code: 0, message: '0', ttl: 1, data: {} }
 
-interface Call {
-  url: string
-  method: string
-  headers: Headers
-  body: string | null
-  signal: AbortSignal | null
-}
-
 function setup(
-  handler: (call: Call) => Response | Promise<Response> = () => Response.json(OK),
+  handler: (call: FetchCall) => Response | Promise<Response> = () => Response.json(OK),
   options: Partial<BilibiliClientOptions> = {}
 ) {
-  const calls: Call[] = []
+  const { fetch, calls } = recordingFetch(handler)
   let credentialCalls = 0
-  const fetch: FetchLike = (url, init) => {
-    const call: Call = {
-      url,
-      method: init.method ?? 'GET',
-      headers: new Headers(init.headers),
-      body: typeof init.body === 'string' ? init.body : null,
-      signal: init.signal ?? null,
-    }
-    calls.push(call)
-    return handler(call)
-  }
   const client = new BilibiliClient({
     credentials: () => {
       credentialCalls++
@@ -63,16 +46,11 @@ function setup(
   return { client, calls, credentialCalls: () => credentialCalls }
 }
 
-function only(calls: Call[]): Call {
-  expect(calls).toHaveLength(1)
-  return calls[0] as Call
-}
-
-function field(call: Call, name: string): string | null {
+function field(call: FetchCall, name: string): string | null {
   return new URLSearchParams(call.body ?? '').get(name)
 }
 
-function expectFormHeaders(call: Call, room: number) {
+function expectFormHeaders(call: FetchCall, room: number) {
   expect(Object.fromEntries(call.headers)).toEqual({
     accept: 'application/json, text/plain, */*',
     'content-type': 'application/x-www-form-urlencoded',
@@ -81,11 +59,6 @@ function expectFormHeaders(call: Call, room: number) {
     'user-agent': DEFAULT_USER_AGENT,
     cookie: CREDENTIALS.cookie,
   })
-}
-
-/** Rejects with the signal's reason once it aborts, like `fetch` against a server that never answers. */
-function hang(call: Call): Promise<Response> {
-  return new Promise((_, reject) => call.signal?.addEventListener('abort', () => reject(call.signal?.reason)))
 }
 
 function apiResult(patch: Partial<ApiResult>): ApiResult {
@@ -133,7 +106,7 @@ describe('silent-user requests', () => {
     await client.getSilentUsers(23058)
     await client.getSilentUsers(23058, 3)
     expect(calls).toHaveLength(2)
-    const [first, third] = calls as [Call, Call]
+    const [first, third] = calls as [FetchCall, FetchCall]
     expect(first.url).toBe('https://api.live.bilibili.com/xlive/web-ucenter/v1/banned/GetSilentUserList')
     expect(first.method).toBe('POST')
     expect(first.body).toBe(`room_id=23058&ps=1&csrf_token=${CSRF}&csrf=${CSRF}&visit_id=`)
@@ -159,11 +132,47 @@ describe('silent-user requests', () => {
   })
 })
 
+describe('auth failures', () => {
+  const DENIED = { code: -101, message: '账号未登录', ttl: 1 }
+
+  test('refresh once through onAuthFailure, then retry with the new cookies', async () => {
+    let version = 1
+    const failures: number[] = []
+    const { client, calls } = setup(call => Response.json(call.headers.get('cookie') === 'SESSDATA=s1' ? DENIED : OK), {
+      credentials: () => ({ cookie: `SESSDATA=s${version}`, csrf: `c${version}`, uid: null }),
+      onAuthFailure: result => {
+        failures.push(result.code)
+        version++
+      },
+    })
+    expect((await client.addSilentUser(ROOM, UID, '独轮车')).ok).toBe(true)
+    expect(failures).toEqual([-101])
+    expect(calls.map(call => field(call, 'csrf'))).toEqual(['c1', 'c2'])
+  })
+
+  test('give up after one retry', async () => {
+    let failures = 0
+    const { client, calls } = setup(() => Response.json(DENIED), {
+      onAuthFailure: () => {
+        failures++
+      },
+    })
+    expect((await client.delSilentUser(ROOM, UID)).code).toBe(-101)
+    expect(failures).toBe(1)
+    expect(calls).toHaveLength(2)
+  })
+})
+
 describe('ban reason', () => {
   test('trims, collapses whitespace and drops invisible characters', () => {
     expect(normalizeReason('  独轮车：刷屏  ')).toBe('独轮车：刷屏')
     expect(normalizeReason('第一行\n\n第二行\t第三行')).toBe('第一行 第二行 第三行')
     expect(normalizeReason('独\u200b轮\u200d车\ufeff')).toBe('独轮车')
+    expect(normalizeReason('千\u3164舰')).toBe('千舰')
+  })
+
+  test('keeps emoji sequences intact', () => {
+    expect(normalizeReason('独轮车 👨‍👩‍👧 🏴󠁧󠁢󠁳󠁣󠁴󠁿')).toBe('独轮车 👨‍👩‍👧 🏴󠁧󠁢󠁳󠁣󠁴󠁿')
   })
 
   test('falls back to 独轮车 when nothing is left', () => {
@@ -211,7 +220,6 @@ describe('silent-user list parsing', () => {
         operatorName: '房管A',
         createdAt: '2026-10-20 12:00:00',
         remainingSec: null,
-        raw: item,
       },
     ])
     expect(page.totalPages).toBe(1)
@@ -227,7 +235,6 @@ describe('silent-user list parsing', () => {
         operatorName: '主播',
         createdAt: '2026-10-21 08:30:00',
         remainingSec: 3600,
-        raw: item,
       },
     ])
     expect(page.totalPages).toBe(4)
@@ -245,9 +252,8 @@ describe('silent-user list parsing', () => {
         operatorName: null,
         createdAt: '2026-10-20 12:00:00',
         remainingSec: 120,
-        raw: seconds,
       },
-      { uid: 7, uname: 'b', operatorName: '房管B', createdAt: '2026-10-20 12:00:00', remainingSec: null, raw: millis },
+      { uid: 7, uname: 'b', operatorName: '房管B', createdAt: '2026-10-20 12:00:00', remainingSec: null },
     ])
     expect(page.totalPages).toBeNull()
   })

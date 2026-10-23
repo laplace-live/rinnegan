@@ -2,37 +2,41 @@ import { describe, expect, test } from 'bun:test'
 
 import type { AiConfig, AiProviderKind, DecisionProtocol } from '@/ai/types'
 
-import { readPath } from '@/ai/http'
 import { buildReviewMessages, buildReviewState, REVIEW_REPLY_SCHEMA } from '@/ai/prompt'
 import { AiBudgetError, createReviewer, DEFAULT_AI_CONFIG, describeAiGap, resolveAiConfig } from '@/ai/reviewer'
 import { fakeFetch, jsonResponse, only, pending, SAMPLE_UID, sampleInput } from '@/ai/test-helpers'
+import { readPath } from '@/util/guards'
 
 const MINUTE = 60_000
-const jev = resolveAiConfig({ apiKey: 'ts-test-secret' })
+const jev = resolveAiConfig({ protocol: 'typesafe', apiKey: 'ts-test-secret' })
 const llm = resolveAiConfig({ provider: 'llm', apiKey: 'sk-or-test-secret', model: 'openai/gpt-5.1-mini' })
 const noul = (value: number) => jsonResponse({ answers: { dulunche: { type: 'noul', noul: value } } })
 const chat = (content: string) => jsonResponse({ choices: [{ message: { role: 'assistant', content } }] })
 
 describe('resolveAiConfig', () => {
-  test('defaults to Jev over the Typesafe protocol', () => {
+  test('defaults to Jev over OpenRouter', () => {
     expect(resolveAiConfig()).toEqual({
       provider: 'jev',
-      protocol: 'typesafe',
-      apiBase: 'https://api.typesafe.ai/v1',
+      protocol: 'openrouter',
+      apiBase: 'https://openrouter.ai/api',
       apiKey: '',
-      model: 'jev-latest',
+      model: 'typesafe/jev-1.13',
       timeoutMs: 8_000,
       threshold: 0.8,
-      maxPerHour: 60,
+      maxPerHour: 120,
     })
     expect(resolveAiConfig()).toEqual(DEFAULT_AI_CONFIG.jev)
   })
 
-  test('uses the OpenRouter decisions endpoint and model for that protocol', () => {
-    expect(resolveAiConfig({ protocol: 'openrouter' })).toMatchObject({
-      apiBase: 'https://openrouter.ai/api',
-      model: 'typesafe/jev-1.13',
+  test('uses the Typesafe endpoint and model for that protocol', () => {
+    expect(resolveAiConfig({ protocol: 'typesafe' })).toMatchObject({
+      apiBase: 'https://api.typesafe.ai/v1',
+      model: 'jev-latest',
     })
+  })
+
+  test('gives the LLM its own timeout', () => {
+    expect(resolveAiConfig({ provider: 'llm' }).timeoutMs).toBe(30_000)
   })
 
   test('leaves the LLM model to the user', () => {

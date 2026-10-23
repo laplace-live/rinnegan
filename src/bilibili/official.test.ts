@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { BilibiliClient } from '@/bilibili'
+import { recordingFetch } from '@/testing/fetch'
 
 /** The requests Bilibili's own room-admin UI sends, as captured by the maintainer. */
 // Placeholder of the same shape; the captured session token stays out of the repository.
@@ -21,13 +22,10 @@ const OFFICIAL = {
 }
 
 function capture() {
-  const calls: { url: string; init: RequestInit }[] = []
+  const { fetch, calls } = recordingFetch(() => Response.json({ code: 0, message: '0', data: {} }))
   const client = new BilibiliClient({
     credentials: () => ({ cookie: `SESSDATA=x; bili_jct=${CSRF}`, csrf: CSRF, uid: 1 }),
-    fetch: (url, init) => {
-      calls.push({ url, init })
-      return new Response(JSON.stringify({ code: 0, message: '0', data: {} }))
-    },
+    fetch,
   })
   return { calls, client }
 }
@@ -37,9 +35,9 @@ describe('requests match Bilibili’s own frontend byte for byte', () => {
     const { calls, client } = capture()
     await client.addSilentUser(456117, 3493260125276695, '第一卷 第一章 反正比企谷八幡就是一副死鱼眼')
     expect(calls[0]?.url).toBe(OFFICIAL.ban.url)
-    expect(calls[0]?.init.method).toBe('POST')
-    expect(calls[0]?.init.body).toBe(OFFICIAL.ban.body)
-    const headers = new Headers(calls[0]?.init.headers)
+    expect(calls[0]?.method).toBe('POST')
+    expect(calls[0]?.body).toBe(OFFICIAL.ban.body)
+    const headers = calls[0]?.headers ?? new Headers()
     expect(headers.get('referer')).toBe('https://live.bilibili.com/456117')
     expect(headers.get('content-type')).toBe('application/x-www-form-urlencoded')
     expect(headers.get('accept')).toBe('application/json, text/plain, */*')
@@ -49,13 +47,13 @@ describe('requests match Bilibili’s own frontend byte for byte', () => {
     const { calls, client } = capture()
     await client.delSilentUser(456117, 3493260125276695)
     expect(calls[0]?.url).toBe(OFFICIAL.unban.url)
-    expect(calls[0]?.init.body).toBe(OFFICIAL.unban.body)
+    expect(calls[0]?.body).toBe(OFFICIAL.unban.body)
   })
 
   test('GetSilentUserList', async () => {
     const { calls, client } = capture()
     await client.getSilentUsers(456117, 1)
     expect(calls[0]?.url).toBe(OFFICIAL.list.url)
-    expect(calls[0]?.init.body).toBe(OFFICIAL.list.body)
+    expect(calls[0]?.body).toBe(OFFICIAL.list.body)
   })
 })

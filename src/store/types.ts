@@ -79,6 +79,8 @@ export interface BanRule {
   onSpend?(ban: BanRecord, event: SpendEvent): RuleDecision
   /** On the periodic tick. */
   onTick?(ban: BanRecord, now: number): RuleDecision
+  /** `due` when `onTick` only ever acts on bans whose `expiresAt` has passed, so a tick can skip the rest */
+  tickScope?: 'due' | 'active'
 }
 
 /** Performs the remote unban; resolves true when Bilibili lifted it (or it was a dry run). */

@@ -1,8 +1,9 @@
 /** Test doubles for `src/ai` tests; never imported by app code. */
 
-import { expect } from 'bun:test'
-
 import type { ReviewInput } from '@/ai/types'
+import type { FetchLike } from '@/util/fetch'
+
+export { only } from '@/testing/fetch'
 
 /** A request seen by {@link fakeFetch}. */
 export interface FetchCall {
@@ -30,10 +31,10 @@ export function pending(): Promise<Response> {
 /** A recording `fetch` answering through `reply`; like real fetch, it rejects with the signal's reason on abort. */
 export function fakeFetch(reply: (call: FetchCall) => Response | Promise<Response>) {
   const calls: FetchCall[] = []
-  const fetcher = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
+  const fetcher: FetchLike = async (url, init) => {
     const signal = init.signal ?? undefined
     const call: FetchCall = {
-      url: String(input),
+      url,
       method: init.method ?? 'GET',
       headers: new Headers(init.headers),
       body: typeof init.body === 'string' ? JSON.parse(init.body) : {},
@@ -48,21 +49,13 @@ export function fakeFetch(reply: (call: FetchCall) => Response | Promise<Respons
     })
     return Promise.race([answer, aborted])
   }
-  return { fetch: fetcher as unknown as typeof fetch, calls }
-}
-
-/** The single recorded call; fails the test otherwise. */
-export function only(calls: FetchCall[]): FetchCall {
-  expect(calls).toHaveLength(1)
-  return calls[0] as FetchCall
+  return { fetch: fetcher, calls }
 }
 
 /** A looping suspect: one line resent every 5.04 s with a soft hyphen moved around. */
 export function sampleInput(): ReviewInput {
   const lines = ['主播好\u00AD棒', '主\u00AD播好棒', '主播\u00AD好棒', '主播好棒\u00AD']
   return {
-    uname: '测试用户',
-    roomId: 21_452_505,
     messages: Array.from({ length: 8 }, (_, i) => ({ offsetSec: i * 5.04, text: lines[i % lines.length] ?? '' })),
     assessment: {
       roomId: 21_452_505,
@@ -96,7 +89,7 @@ export function sampleInput(): ReviewInput {
       userType: 0,
       guardType: 0,
       medalLevel: 3,
-      wealthLevel: 12,
+      proof: 0.995,
     },
   }
 }

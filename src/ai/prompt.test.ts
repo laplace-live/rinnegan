@@ -1,27 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
-import {
-  buildReviewMessages,
-  buildReviewState,
-  REVIEW_REPLY_SCHEMA,
-  REVIEW_SYSTEM_PROMPT,
-  revealInvisible,
-} from '@/ai/prompt'
+import { buildReviewMessages, buildReviewState, REVIEW_REPLY_SCHEMA, REVIEW_SYSTEM_PROMPT } from '@/ai/prompt'
 import { SAMPLE_UID, sampleInput } from '@/ai/test-helpers'
-
-describe('revealInvisible', () => {
-  test('marks soft hyphens, zero-width spaces and braille blanks', () => {
-    expect(revealInvisible('主播\u00AD好\u200B棒\u2800')).toBe('主播⟨U+00AD⟩好⟨U+200B⟩棒⟨U+2800⟩')
-  })
-
-  test('marks astral tag characters by their full code point', () => {
-    expect(revealInvisible('冲\u{E0041}')).toBe('冲⟨U+E0041⟩')
-  })
-
-  test('keeps VS16 and visible text', () => {
-    expect(revealInvisible('爱你❤\uFE0F 233')).toBe('爱你❤\uFE0F 233')
-  })
-})
 
 describe('buildReviewState', () => {
   test('never carries the uid', () => {
@@ -30,9 +10,10 @@ describe('buildReviewState', () => {
     expect(json).not.toContain('"uid"')
   })
 
-  test('reveals invisible characters in messages and uname', () => {
-    const state = buildReviewState({ ...sampleInput(), uname: '路人\u200B甲' })
-    expect(state.uname).toBe('路人⟨U+200B⟩甲')
+  test('reveals invisible characters in messages and uname, but not emoji sequences', () => {
+    const input = sampleInput()
+    const state = buildReviewState({ ...input, assessment: { ...input.assessment, uname: '路人\u200B甲👨‍👩‍👧' } })
+    expect(state.uname).toBe('路人⟨U+200B⟩甲👨‍👩‍👧')
     expect(state.messages.slice(0, 2)).toEqual([
       { t: 0, text: '主播好⟨U+00AD⟩棒' },
       { t: 5, text: '主⟨U+00AD⟩播好棒' },

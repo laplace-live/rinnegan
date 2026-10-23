@@ -1,7 +1,7 @@
 import type { DetectorOptions, Episode, UserSummary } from '@/detect/detector'
 import type { ClusterSummary, Evidence, Pattern, Verdict } from '@/types'
 
-import { escapeInvisible } from '@/detect/normalize'
+import { clip, escapeInvisible } from '@/detect/normalize'
 import { EVIDENCE_LABELS, PATTERN_LABELS, VERDICT_LABELS } from '@/report/labels'
 import { clock, count, dateTime, style } from '@/util/console'
 
@@ -146,7 +146,7 @@ export function renderConsole(
       }
       for (const cluster of user.clusters.slice(0, 2)) {
         lines.push(
-          `   「${escapeInvisible(cluster.key).slice(0, 40)}」×${cluster.count} · ${cluster.variants} 种写法 · 中位间隔 ${gap(cluster.medianGapMs)}${cluster.crowd ? ` · 同时 ${cluster.crowd} 人在刷` : ''}`
+          `   「${escapeInvisible(clip(cluster.key, 40))}」×${cluster.count} · ${cluster.variants} 种写法 · 中位间隔 ${gap(cluster.medianGapMs)}${cluster.crowd ? ` · 同时 ${cluster.crowd} 人在刷` : ''}`
         )
         for (const sample of cluster.samples.slice(0, options.samples)) {
           lines.push(style.gray(`      ${clock(sample.timestamp)}  ${escapeInvisible(sample.text)}`))
@@ -182,7 +182,7 @@ export function renderMarkdown(report: OfflineReport): string {
   for (const user of report.users) {
     const top = user.clusters[0]
     out.push(
-      `| ${user.rank} | ${VERDICT_LABELS[user.verdict]}${user.exempt ? '（豁免）' : ''} | ${user.score} | ${cell(user.uname)} | ${user.uid} | ${PATTERN_LABELS[user.pattern]} | ${user.repeats} | ${user.evidence.map(item => EVIDENCE_LABELS[item.kind]).join('、')} | ${top ? cell(`「${escapeInvisible(top.key).slice(0, 30)}」×${top.count}`) : ''} |`
+      `| ${user.rank} | ${VERDICT_LABELS[user.verdict]}${user.exempt ? '（豁免）' : ''} | ${user.score} | ${cell(user.uname)} | ${user.uid} | ${PATTERN_LABELS[user.pattern]} | ${user.repeats} | ${user.evidence.map(item => EVIDENCE_LABELS[item.kind]).join('、')} | ${top ? cell(`「${escapeInvisible(clip(top.key, 30))}」×${top.count}`) : ''} |`
     )
   }
   for (const user of report.users) {
@@ -199,7 +199,7 @@ export function renderMarkdown(report: OfflineReport): string {
       out.push(`- ${EVIDENCE_LABELS[item.kind]}（${item.weight}）：${cell(item.detail)}`)
     for (const episode of user.episodes) {
       out.push(
-        `- 时段 ${range(episode.startAt, episode.endAt)}：${VERDICT_LABELS[episode.verdict]}，峰值 ${episode.peakScore}，「${cell(escapeInvisible(episode.key).slice(0, 30))}」`
+        `- 时段 ${range(episode.startAt, episode.endAt)}：${VERDICT_LABELS[episode.verdict]}，峰值 ${episode.peakScore}，「${cell(escapeInvisible(clip(episode.key, 30)))}」`
       )
     }
     for (const cluster of user.clusters) {

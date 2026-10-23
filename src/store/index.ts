@@ -4,6 +4,7 @@ import { MemoryBanStore } from '@/store/memory'
 import { PostgresBanStore } from '@/store/postgres'
 import { RedisBanStore } from '@/store/redis'
 import { SqliteBanStore } from '@/store/sqlite'
+import { maskUrl } from '@/util/url'
 
 export type * from '@/store/types'
 
@@ -57,21 +58,5 @@ function openBanStore(url: string): BanStore {
 
 /** `url` with any password (userinfo or a `password`-like query parameter) masked, for console output. */
 export function describeStoreUrl(url: string): string {
-  let parsed: URL
-  try {
-    parsed = new URL(url)
-  } catch {
-    return url.replace(/(\/\/[^/@:]*:)[^/@]*@/, '$1***@')
-  }
-  let masked = false
-  if (parsed.password) {
-    parsed.password = '***'
-    masked = true
-  }
-  for (const key of [...parsed.searchParams.keys()]) {
-    if (!/pass|pwd|secret|token/i.test(key)) continue
-    parsed.searchParams.set(key, '***')
-    masked = true
-  }
-  return masked ? parsed.toString() : url
+  return maskUrl(url)
 }

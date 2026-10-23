@@ -1,5 +1,7 @@
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+
+import { localDate } from '@/util/console'
 
 /** Keys never written to disk, however deep they sit in an entry. */
 const SECRET_KEYS =
@@ -14,12 +16,6 @@ export function scrub(value: unknown, depth = 0): unknown {
     out[key] = SECRET_KEYS.test(key) ? '[redacted]' : scrub(item, depth + 1)
   }
   return out
-}
-
-function localDate(ms: number): string {
-  const date = new Date(ms)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
 export interface AuditLogOptions {
@@ -63,6 +59,20 @@ export class AuditLog {
       ...(scrub(data) as Record<string, unknown>),
     }
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`)
+  }
+}
+
+const AUDIT_FILE = /^audit-\d{4}-\d{2}-\d{2}\.jsonl$/
+
+/** Audit files in `dir`, oldest day first; none when the directory doesn't exist. */
+export function listAuditFiles(dir: string): string[] {
+  try {
+    return readdirSync(dir)
+      .filter(name => AUDIT_FILE.test(name))
+      .sort()
+      .map(name => join(dir, name))
+  } catch {
+    return []
   }
 }
 

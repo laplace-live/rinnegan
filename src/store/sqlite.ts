@@ -65,12 +65,10 @@ const QUERIES = {
 /** Ban records in a local SQLite database (WAL mode). */
 export class SqliteBanStore implements BanStore {
   readonly kind = 'sqlite'
-  readonly path: string
   readonly #db: Database
 
   /** @param path Database file, created with its directory when missing; `:memory:` for a throwaway database */
   constructor(path: string) {
-    this.path = path
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
     this.#db = new Database(path, { create: true, strict: true })
   }

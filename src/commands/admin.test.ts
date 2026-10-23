@@ -2,48 +2,19 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { encrypt } from '@laplace.live/login-sync'
 
 import { AuditLog, readAuditEntries } from '@/audit/audit'
 import { runBans, runUnban } from '@/commands/admin'
 import { DEFAULT_CONFIG, mergeConfig } from '@/config'
 import { createBanStore } from '@/store'
+import { banRecord } from '@/testing/fixtures'
+import { fakeBilibili as fakeServer, moderatorBlob } from '@/testing/login-sync'
 
 const ROOM = 25034104
+const TOKEN = 'u1@p'
 
-async function loginSyncBlob(): Promise<string> {
-  const cookie = (name: string, value: string) => ({
-    name,
-    value,
-    domain: '.bilibili.com',
-    path: '/',
-    secure: true,
-    httpOnly: false,
-    hostOnly: false,
-    session: true,
-    sameSite: 'no_restriction',
-    storeId: '0',
-  })
-  return encrypt(
-    {
-      cookie_data: { 'bilibili.com': [cookie('SESSDATA', 's'), cookie('bili_jct', 'csrf'), cookie('DedeUserID', '9')] },
-      local_storage_data: {},
-    },
-    { uuid: 'u1', password: 'p' },
-    { version: 2 }
-  )
-}
-
-function fakeBilibili(blob: string, silent: { tuid: number; tname: string }[] = []) {
-  const posts: { url: string; body: string }[] = []
-  const fetch = async (url: string, init?: RequestInit) => {
-    if (url.includes('/get/u1')) return Response.json({ encrypted: blob })
-    if (url.includes('/nav')) return Response.json({ code: 0, data: { isLogin: true, mid: 9, uname: '主播' } })
-    posts.push({ url, body: String(init?.body ?? '') })
-    if (url.includes('GetSilentUserList')) return Response.json({ code: 0, data: { data: silent, total_page: 1 } })
-    return Response.json({ code: 0, message: '0', data: {} })
-  }
-  return { posts, fetch }
+async function fakeBilibili(silent: { tuid: number; tname: string }[] = []) {
+  return fakeServer({ token: TOKEN, blob: await moderatorBlob(TOKEN, 'csrf', 9), uid: 9, uname: '主播', silent })
 }
 
 describe('admin commands', () => {
@@ -58,33 +29,15 @@ describe('admin commands', () => {
     const store = await createBanStore(storeUrl)
     const live = new AuditLog({ dir, mode: 'live' })
     for (const uid of [101, 102]) {
-      const id = crypto.randomUUID()
-      await store.add({
-        id,
-        roomId: ROOM,
-        uid,
-        uname: `bot${uid}`,
-        reason: '独轮车',
-        score: 100,
-        pattern: 'loop',
-        evidence: {},
-        createdAt: Date.now(),
-        expiresAt: null,
-        hours: -1,
-        status: 'active',
-        liftedAt: null,
-        liftReason: null,
-        spend: 0,
-        operatorUid: 9,
-        meta: {},
-      })
-      live.write('ban', { roomId: ROOM, uid, uname: `bot${uid}`, dryRun: false, banId: id })
+      const record = banRecord({ roomId: ROOM, uid, uname: `bot${uid}`, operatorUid: 9 })
+      await store.add(record)
+      live.write('ban', { roomId: ROOM, uid, uname: `bot${uid}`, dryRun: false, banId: record.id })
     }
     live.write('ban', { roomId: ROOM, uid: 103, uname: 'simulated', dryRun: true })
     await store.close()
 
-    const { posts, fetch } = fakeBilibili(await loginSyncBlob())
-    const config = mergeConfig(DEFAULT_CONFIG, { logDir: dir, storeUrl, loginSync: { token: 'u1@p' } })
+    const { posts, fetch } = await fakeBilibili()
+    const config = mergeConfig(DEFAULT_CONFIG, { logDir: dir, storeUrl, loginSync: { token: TOKEN } })
     const code = await runUnban({
       config,
       room: null,
@@ -123,8 +76,8 @@ describe('admin commands', () => {
 
   test('bans lists the remote silent list', async () => {
     dir = mkdtempSync(join(tmpdir(), 'rinnegan-admin-'))
-    const { posts, fetch } = fakeBilibili(await loginSyncBlob(), [{ tuid: 5, tname: 'spammer' }])
-    const config = mergeConfig(DEFAULT_CONFIG, { logDir: dir, storeUrl: 'memory:', loginSync: { token: 'u1@p' } })
+    const { posts, fetch } = await fakeBilibili([{ tuid: 5, tname: 'spammer' }])
+    const config = mergeConfig(DEFAULT_CONFIG, { logDir: dir, storeUrl: 'memory:', loginSync: { token: TOKEN } })
     expect(await runBans({ config, room: ROOM, remote: true, local: true, limit: 10, fetch })).toBe(0)
     expect(posts[0]?.body).toBe(`room_id=${ROOM}&ps=1&csrf_token=csrf&csrf=csrf&visit_id=`)
   })

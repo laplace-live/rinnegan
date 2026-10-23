@@ -1,45 +1,31 @@
-import { readdirSync } from 'node:fs'
-import { join } from 'node:path'
-
+import type { BilibiliClient } from '@/bilibili'
 import type { RinneganConfig } from '@/config'
-import type { BanStore } from '@/store/types'
+import type { FetchLike } from '@/util/fetch'
 
-import { AuditLog, readAuditEntries } from '@/audit/audit'
-import { BilibiliClient, CredentialProvider, type FetchLike, isNotBanned } from '@/bilibili'
-import { createBanStore, describeStoreUrl } from '@/store'
+import { AuditLog, listAuditFiles, readAuditEntries } from '@/audit/audit'
+import { describeResult } from '@/bilibili'
+import { connectLoginSync, openStore } from '@/commands/session'
+import { API_GAP_MS, liftSilentUser } from '@/enforce/enforcer'
+import { describeStoreUrl } from '@/store'
 import { count, dateTime, fail, log, style, warn } from '@/util/console'
+import { errorMessage } from '@/util/guards'
 
 /** A logged-in client from the login-sync token, or null after printing why not. */
-async function loggedInClient(config: RinneganConfig, fetch?: FetchLike): Promise<BilibiliClient | null> {
+async function loggedInClient(
+  config: RinneganConfig,
+  fetch?: FetchLike,
+  audit?: AuditLog
+): Promise<BilibiliClient | null> {
   if (!config.loginSync.token) {
     fail('需要 LOGIN_SYNC_TOKEN（或 --login-sync-token）才能访问禁言接口')
     return null
   }
-  const credentials = new CredentialProvider({
-    token: config.loginSync.token,
-    baseURL: config.loginSync.baseURL,
-    authKey: config.loginSync.authKey || undefined,
-    fetch,
-  })
-  const client = new BilibiliClient({ credentials: () => credentials.get(), fetch })
   try {
-    const nav = await client.nav()
-    if (!nav.isLogin) throw new Error('Login Sync 中的 B 站登录已失效')
+    const { client, nav } = await connectLoginSync(config, fetch, audit)
     log(style.gray(`登录账号 ${nav.uname}（${nav.uid}）`))
     return client
   } catch (error) {
-    fail(`无法使用 Login Sync 凭据：${error instanceof Error ? error.message : String(error)}`)
-    return null
-  }
-}
-
-async function openStore(config: RinneganConfig): Promise<BanStore | null> {
-  try {
-    return await createBanStore(config.storeUrl)
-  } catch (error) {
-    warn(
-      `无法打开封禁记录 ${describeStoreUrl(config.storeUrl)}：${error instanceof Error ? error.message : String(error)}`
-    )
+    fail(`无法使用 Login Sync 凭据：${errorMessage(error)}`)
     return null
   }
 }
@@ -74,13 +60,13 @@ export async function runBans(options: BansOptions): Promise<number> {
           log(`  ${user.uname}（${user.uid}）${extra.length ? style.gray(` · ${extra.join(' · ')}`) : ''}`)
         }
       } catch (error) {
-        fail(`读取禁言列表失败：${error instanceof Error ? error.message : String(error)}`)
+        fail(`读取禁言列表失败：${errorMessage(error)}`)
         exit = 1
       }
     }
   }
   if (options.local) {
-    const store = await openStore(config)
+    const store = await openStore(config, warn)
     if (store) {
       const records = await store.list({ roomId: room, limit: options.limit })
       log(style.bold(`房间 ${room} 的 Rinnegan 封禁记录（${describeStoreUrl(config.storeUrl)}）· ${records.length} 条`))
@@ -126,15 +112,9 @@ interface Target {
 
 /** Bans a session made, read back from the audit logs. */
 async function sessionTargets(logDir: string, session: string): Promise<Target[]> {
-  let files: string[] = []
-  try {
-    files = readdirSync(logDir).filter(name => /^audit-.*\.jsonl$/.test(name))
-  } catch {
-    return []
-  }
   const targets = new Map<string, Target>()
-  for (const name of files.sort()) {
-    for (const entry of await readAuditEntries(join(logDir, name))) {
+  for (const path of listAuditFiles(logDir)) {
+    for (const entry of await readAuditEntries(path)) {
       if (entry.session !== session || entry.event !== 'ban' || entry.dryRun !== false) continue
       const roomId = Number(entry.roomId)
       const uid = Number(entry.uid)
@@ -166,15 +146,14 @@ export async function runUnban(options: UnbanOptions): Promise<number> {
     return 0
   }
 
-  const client = await loggedInClient(config, options.fetch)
+  const client = await loggedInClient(config, options.fetch, audit)
   if (!client) return 1
-  const store = await openStore(config)
+  const store = await openStore(config, warn)
   let lifted = 0
   for (const [index, target] of targets.entries()) {
-    if (index > 0) await Bun.sleep(options.gapMs ?? 1200)
-    const result = await client.delSilentUser(target.roomId, target.uid)
-    const ok = result.ok || isNotBanned(result)
+    if (index > 0) await Bun.sleep(options.gapMs ?? API_GAP_MS)
     const record = store ? await store.findActive(target.roomId, target.uid) : null
+    const { ok, result } = await liftSilentUser(client, audit, { ...target, banId: record?.id ?? null }, options.reason)
     if (ok && record && store) {
       await store.update(record.id, {
         status: 'lifted',
@@ -182,16 +161,10 @@ export async function runUnban(options: UnbanOptions): Promise<number> {
         liftReason: `手动解除：${options.reason}`,
       })
     }
-    audit.write(ok ? 'unban' : 'unban-failed', {
-      ...target,
-      banId: record?.id ?? null,
-      reason: options.reason,
-      result: { ok: result.ok, code: result.code, message: result.message, status: result.status },
-    })
     if (ok) {
       lifted++
       log(`已解除 ${target.uname || record?.uname || target.uid}（${target.uid}）在房间 ${target.roomId} 的禁言`)
-    } else fail(`解除失败 ${target.uid}：${result.code} ${result.message}`)
+    } else fail(`解除失败 ${target.uid}：${describeResult(result)}`)
   }
   await store?.close()
   audit.write('session-end', { lifted, total: targets.length })

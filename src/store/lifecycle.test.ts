@@ -1,37 +1,13 @@
 import { describe, expect, mock, test } from 'bun:test'
 
-import type { BanRecord, BanRule, BanStore, LiftAction } from '@/store/types'
+import type { BanRule, BanStore, LiftAction } from '@/store/types'
 import type { SpendEvent } from '@/types'
 
 import { BanLifecycle, type LifecycleEvent } from '@/store/lifecycle'
 import { MemoryBanStore } from '@/store/memory'
 import { EXPIRY_RULE, evaluateRules, expiryRule, SPEND_TO_UNBAN_RULE, spendToUnbanRule } from '@/store/rules'
-
-let seq = 0
-
-function ban(overrides: Partial<BanRecord> = {}): BanRecord {
-  seq++
-  return {
-    id: crypto.randomUUID(),
-    roomId: 1000,
-    uid: 2000,
-    uname: `用户${seq}`,
-    reason: '独轮车',
-    score: 95,
-    pattern: 'loop',
-    evidence: null,
-    createdAt: seq,
-    expiresAt: null,
-    hours: -1,
-    status: 'active',
-    liftedAt: null,
-    liftReason: null,
-    spend: 0,
-    operatorUid: null,
-    meta: {},
-    ...overrides,
-  }
-}
+import { banRecord as ban } from '@/testing/fixtures'
+import { until } from '@/testing/wait'
 
 function spend(overrides: Partial<SpendEvent> = {}): SpendEvent {
   return {
@@ -57,14 +33,6 @@ function setup(options: { rules?: BanRule[]; lift?: LiftAction; store?: BanStore
     onEvent: event => events.push(event),
   })
   return { store, events, lift, lifecycle }
-}
-
-async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (!condition()) {
-    if (Date.now() > deadline) throw new Error('timed out waiting for condition')
-    await Bun.sleep(5)
-  }
 }
 
 const SPEND_REASON = '累计消费 ¥30.00 ≥ ¥30，自动解除禁言'
@@ -255,6 +223,19 @@ describe('BanLifecycle', () => {
     expect(lift).toHaveBeenCalledTimes(2)
   })
 
+  test('reads only due bans when every tick rule is due-scoped', async () => {
+    const store = new MemoryBanStore()
+    store.listActive = async () => {
+      throw new Error('scanned every active ban')
+    }
+    const { events, lift, lifecycle } = setup({ store, rules: [expiryRule()] })
+    await store.add(ban({ expiresAt: 5 }))
+    await store.add(ban({ uid: 2001, expiresAt: 50 }))
+    await lifecycle.tick(10)
+    expect(lift).toHaveBeenCalledTimes(1)
+    expect(events.some(event => event.type === 'error')).toBe(false)
+  })
+
   test('overlapping ticks share one pass', async () => {
     const store = new MemoryBanStore()
     const listActive = store.listActive.bind(store)
@@ -276,10 +257,10 @@ describe('BanLifecycle', () => {
     const { store, lift, lifecycle } = setup()
     await store.add(ban({ expiresAt: 0 }))
     lifecycle.start(10)
-    await waitFor(() => lift.mock.calls.length === 1)
+    await until(() => lift.mock.calls.length === 1)
 
     await store.add(ban({ uid: 2001, expiresAt: 0 }))
-    await waitFor(() => lift.mock.calls.length === 2)
+    await until(() => lift.mock.calls.length === 2)
 
     await lifecycle.stop()
     await store.add(ban({ uid: 2002, expiresAt: 0 }))

@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
+import type { DecisionProtocol } from '@/ai/types'
+import type { ConfigLayer } from '@/config'
+import type { Pattern } from '@/types'
+
 import { configFromFlags, parseTime } from '@/cli'
 import {
   configFromEnv,
@@ -52,7 +56,7 @@ describe('config layers', () => {
     expect(layer.live).toEqual({ url: 'ws://lef:8080', rooms: [25034104] })
     expect(layer.ai).toEqual({ mode: 'confirm', apiKey: 'sk-test' })
     expect(layer.storeUrl).toBe('memory:')
-    expect(() => configFromEnv({ RINNEGAN_AI_MODE: 'yolo' })).toThrow('RINNEGAN_AI_MODE')
+    expect(configFromEnv({ UNRELATED: 'x', LOGIN_SYNC_TOKEN: ' ' })).toEqual({})
   })
 
   test('flags override file and env, nested sections merge', () => {
@@ -73,5 +77,14 @@ describe('config layers', () => {
     expect(() => validateConfig(mergeConfig(DEFAULT_CONFIG, { ban: { maxPerSession: 0 } }))).toThrow()
     expect(() => validateConfig(mergeConfig(DEFAULT_CONFIG, { detector: { windowMs: 1000 } }))).toThrow()
     expect(() => validateConfig(DEFAULT_CONFIG)).not.toThrow()
+  })
+
+  test('validateConfig checks enums from every layer the same way', () => {
+    const load = (layer: ConfigLayer) => () => validateConfig(mergeConfig(DEFAULT_CONFIG, layer))
+    expect(load(configFromEnv({ RINNEGAN_AI_MODE: 'yolo' }))).toThrow('ai.mode')
+    expect(load(configFromFlags({ 'ai-provider': 'gpt' }))).toThrow('ai.provider 只能是 jev / llm')
+    expect(load({ ai: { mode: 'off', protocol: 'grpc' as DecisionProtocol } })).toThrow('ai.protocol')
+    expect(load({ ban: { patterns: ['spam' as Pattern] } })).toThrow('ban.patterns')
+    expect(load(configFromFlags({ 'ai-provider': 'llm', 'ai-protocol': ' ' }))).not.toThrow()
   })
 })

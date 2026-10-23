@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, setSystemTime, test } from 'bun:test'
 import type { LoginSyncCookie, LoginSyncPayload } from '@laplace.live/login-sync'
-import { encrypt, isLoginSyncError, parseToken } from '@laplace.live/login-sync'
+import { isLoginSyncError } from '@laplace.live/login-sync'
 
-import type { FetchLike } from '@/bilibili/client'
 import type { CredentialProviderOptions, LoadCredentialsOptions } from '@/bilibili/credentials'
+import type { FetchCall } from '@/testing/fetch'
 
 import { CredentialProvider, credentialSummary, credentialsFromPayload, loadCredentials } from '@/bilibili/credentials'
+import { hang, recordingFetch } from '@/testing/fetch'
+import { syncCookie as cookie, syncBlob } from '@/testing/login-sync'
 
 const BASE = 'https://login-sync.test'
 const UUID = 'rinneganTest01'
@@ -14,24 +16,6 @@ const TOKEN = `${UUID}@${PASSWORD}`
 const SESSDATA = 'a1b2c3d4%2C1792540800%2Ce5f6a*a1CjBxyz'
 const BILI_JCT = '0123456789abcdef0123456789abcdef'
 const DAY = 86_400
-
-/** A cookie as `browser.cookies.getAll()` reports it; `ttlSec` null is a session cookie. */
-function cookie(name: string, value: string, domain = '.bilibili.com', ttlSec: number | null = 180 * DAY) {
-  const result: LoginSyncCookie = {
-    name,
-    value,
-    domain,
-    path: '/',
-    secure: true,
-    httpOnly: name === 'SESSDATA',
-    hostOnly: !domain.startsWith('.'),
-    session: ttlSec === null,
-    sameSite: 'no_restriction',
-    storeId: '0',
-  }
-  if (ttlSec !== null) result.expirationDate = Date.now() / 1000 + ttlSec
-  return result
-}
 
 function payload(cookieData: LoginSyncPayload['cookie_data']): LoginSyncPayload {
   return { cookie_data: cookieData, local_storage_data: { 'laplace.live': { theme: 'dark' } } }
@@ -74,30 +58,16 @@ const REALISTIC_COOKIE = [
 ].join('; ')
 
 function blob(data: LoginSyncPayload, token = TOKEN): Promise<string> {
-  return encrypt(data, parseToken(token), { version: 2 })
-}
-
-/** A fake sync server recording every request. */
-function syncServer(reply: (url: string, init: RequestInit) => Response | Promise<Response>) {
-  const calls: { url: string; method: string; body: string | null }[] = []
-  const fetch: FetchLike = (url, init) => {
-    calls.push({ url, method: init.method ?? 'GET', body: typeof init.body === 'string' ? init.body : null })
-    return reply(url, init)
-  }
-  return { fetch, calls }
+  return syncBlob(data, token)
 }
 
 /** Serves `encrypted` at `/get/<uuid>` and answers like the real server for any other uuid. */
 function serving(encrypted: () => string) {
-  return syncServer(url =>
-    url === `${BASE}/get/${UUID}`
+  return recordingFetch(call =>
+    call.url === `${BASE}/get/${UUID}`
       ? Response.json({ encrypted: encrypted() })
       : Response.json({ message: 'Invalid credentials' }, { status: 403 })
   )
-}
-
-function hang(_url: string, init: RequestInit): Promise<Response> {
-  return new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason)))
 }
 
 async function loadError(options: Partial<LoadCredentialsOptions>): Promise<Error> {
@@ -130,14 +100,14 @@ describe('loadCredentials', () => {
       csrf: BILI_JCT,
       uid: 12345678,
     })
-    expect(server.calls).toEqual([{ url: `${BASE}/get/${UUID}`, method: 'GET', body: null }])
+    expect(server.calls).toMatchObject([{ url: `${BASE}/get/${UUID}`, method: 'GET', body: null }])
   })
 
   test('sends the auth key in a POST body for a private server', async () => {
     const encrypted = await blob(realisticPayload())
-    const server = syncServer(() => Response.json({ encrypted }))
+    const server = recordingFetch(() => Response.json({ encrypted }))
     await loadCredentials({ token: TOKEN, baseURL: BASE, authKey: 'private-key', fetch: server.fetch })
-    expect(server.calls).toEqual([
+    expect(server.calls).toMatchObject([
       { url: `${BASE}/get/${UUID}`, method: 'POST', body: JSON.stringify({ auth: 'private-key' }) },
     ])
   })
@@ -166,7 +136,7 @@ describe('loadCredentials', () => {
       ],
     ]
     for (const [answer, message] of answers) {
-      const error = await loadError({ fetch: syncServer(answer).fetch })
+      const error = await loadError({ fetch: recordingFetch(answer).fetch })
       expect(error.message).toMatch(message)
       expect(isLoginSyncError(error.cause)).toBe(true)
     }
@@ -180,7 +150,7 @@ describe('loadCredentials', () => {
   })
 
   test('maps a timeout and an invalid server address', async () => {
-    const timedOut = await loadError({ fetch: syncServer(hang).fetch, signal: AbortSignal.timeout(20) })
+    const timedOut = await loadError({ fetch: recordingFetch(hang).fetch, signal: AbortSignal.timeout(20) })
     expect(timedOut.message).toBe('登录同步服务器 https://login-sync.test 响应超时')
     const invalid = await loadError({ baseURL: 'not a url' })
     expect(invalid.message).toBe('登录同步服务器地址无效：not a url')
@@ -299,10 +269,10 @@ describe('CredentialProvider', () => {
   afterEach(() => setSystemTime())
 
   function setup(
-    reply: (url: string, init: RequestInit) => Response | Promise<Response>,
+    reply: (call: FetchCall) => Response | Promise<Response>,
     options: Partial<CredentialProviderOptions> = {}
   ) {
-    const server = syncServer(reply)
+    const server = recordingFetch(reply)
     const provider = new CredentialProvider({ token: TOKEN, baseURL: BASE, fetch: server.fetch, ...options })
     return { server, provider }
   }

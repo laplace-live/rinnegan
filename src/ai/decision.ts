@@ -1,8 +1,10 @@
 import type { ReviewState } from '@/ai/prompt'
 import type { AiConfig, DecisionProtocol } from '@/ai/types'
+import type { FetchLike } from '@/util/fetch'
 
-import { describeEndpointGap, postJson, readPath } from '@/ai/http'
+import { describeEndpointGap, postJson } from '@/ai/http'
 import { REVIEW_GUIDE } from '@/ai/prompt'
+import { readPath } from '@/util/guards'
 
 /** Default API base and model per protocol, as in LAPLACE Chatterbox. */
 export const DECISION_DEFAULTS: Readonly<Record<DecisionProtocol, { apiBase: string; model: string }>> = {
@@ -24,7 +26,7 @@ export interface DecisionOptions extends Pick<AiConfig, 'protocol' | 'apiBase' |
   /** Defaults to {@link DECISION_TIMEOUT_MS} */
   timeoutMs?: number
   signal?: AbortSignal
-  fetch?: typeof fetch
+  fetch?: FetchLike
 }
 
 /** Narrow an untyped protocol string to a supported one. */

@@ -3,46 +3,12 @@ import { describe, expect, test } from 'bun:test'
 import type { Assessment } from '@/types'
 
 import { DEFAULT_CONFIG } from '@/config'
-import { exemptionReason, formatReason } from '@/enforce/policy'
+import { banEligibility, exemptionReason, formatReason } from '@/enforce/policy'
+import { assessment } from '@/testing/fixtures'
 
-function assessment(patch: Partial<Assessment> = {}): Assessment {
-  return {
-    roomId: 1,
-    uid: 42,
-    uname: 'bot',
-    at: 0,
-    score: 100,
-    verdict: 'spam',
-    pattern: 'loop',
-    repeats: 34,
-    windowMessages: 35,
-    automation: 0.95,
-    evidence: [],
-    clusters: [
-      {
-        key: '千舰',
-        count: 35,
-        variants: 12,
-        invisible: 35,
-        medianGapMs: 1300,
-        regularity: 1,
-        crowd: 3,
-        firstAt: 0,
-        lastAt: 1,
-        samples: [{ timestamp: 0, text: '千­舰！千舰！' }],
-      },
-    ],
-    userType: 0,
-    guardType: 0,
-    medalLevel: 0,
-    wealthLevel: 0,
-    ...patch,
-  }
-}
+const ban = DEFAULT_CONFIG.ban
 
 describe('exemptionReason', () => {
-  const ban = DEFAULT_CONFIG.ban
-
   test('never bans the streamer or room admins', () => {
     expect(exemptionReason(assessment({ userType: 100 }), ban)).toBe('主播')
     expect(exemptionReason(assessment({ userType: 1 }), ban)).toBe('房管')
@@ -62,11 +28,42 @@ describe('exemptionReason', () => {
   })
 })
 
+describe('banEligibility', () => {
+  const suspect = assessment({ verdict: 'suspect', score: 85, proof: 0.6 })
+
+  test('bans spam outright unless every ban needs the reviewer', () => {
+    expect(banEligibility(assessment(), ban, 'off')).toEqual({ action: 'ban', exempt: null })
+    expect(banEligibility(assessment(), ban, 'assist')).toEqual({ action: 'ban', exempt: null })
+    expect(banEligibility(assessment(), ban, 'confirm')).toEqual({ action: 'review', exempt: null })
+  })
+
+  test('offers only strong, partly automated suspects to the reviewer in assist mode', () => {
+    expect(banEligibility(suspect, ban, 'assist')).toEqual({ action: 'review', exempt: null })
+    expect(banEligibility(suspect, ban, 'off').action).toBeNull()
+    expect(banEligibility(suspect, ban, 'confirm').action).toBeNull()
+    expect(banEligibility({ ...suspect, proof: 0.3 }, ban, 'assist').action).toBeNull()
+    expect(banEligibility({ ...suspect, score: 70 }, ban, 'assist').action).toBeNull()
+  })
+
+  test('reports exemptions only for users it would act on', () => {
+    expect(banEligibility(assessment({ userType: 1 }), ban, 'off')).toEqual({ action: null, exempt: '房管' })
+    expect(banEligibility({ ...suspect, userType: 1 }, ban, 'assist')).toEqual({ action: null, exempt: '房管' })
+    expect(banEligibility({ ...suspect, userType: 1 }, ban, 'off')).toEqual({ action: null, exempt: null })
+  })
+})
+
 describe('formatReason', () => {
   test('fills placeholders with the visible sample', () => {
     expect(formatReason('独轮车 ×{count}/{minutes}分钟：{sample}', assessment(), 600_000)).toBe(
-      '独轮车 ×35/10分钟：千舰！千舰！'
+      '独轮车 ×31/10分钟：千舰'
     )
     expect(formatReason('{pattern} {score} {unknown}', assessment(), 600_000)).toBe('循环独轮车 100 {unknown}')
+  })
+
+  test('returns exactly what Bilibili receives', () => {
+    const top = assessment().clusters[0] as Assessment['clusters'][number]
+    const long = assessment({ clusters: [{ ...top, samples: [{ timestamp: 0, text: '刷'.repeat(80) }] }] })
+    expect(formatReason('独轮车：{sample}', long, 600_000)).toBe(`独轮车：${'刷'.repeat(56)}`)
+    expect(formatReason('  ', assessment(), 600_000)).toBe('独轮车')
   })
 })

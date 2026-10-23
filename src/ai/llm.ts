@@ -1,4 +1,7 @@
-import { describeEndpointGap, isRecord, postJson, readPath, redact } from '@/ai/http'
+import type { FetchLike } from '@/util/fetch'
+
+import { describeEndpointGap, postJson, redact } from '@/ai/http'
+import { isRecord, readPath } from '@/util/guards'
 
 /** OpenRouter's OpenAI-compatible API. */
 export const LLM_DEFAULT_BASE = 'https://openrouter.ai/api/v1'
@@ -34,7 +37,7 @@ export interface ChatCompletionOptions {
   /** Defaults to {@link LLM_TIMEOUT_MS} */
   timeoutMs?: number
   signal?: AbortSignal
-  fetch?: typeof fetch
+  fetch?: FetchLike
 }
 
 /** Why the base, key or model can't be called, or null. */
@@ -94,7 +97,7 @@ export function extractJsonObject(text: string): Record<string, unknown> | null 
   for (const candidate of candidates) {
     try {
       const value: unknown = JSON.parse(candidate)
-      if (isRecord(value) && !Array.isArray(value)) return value
+      if (isRecord(value)) return value
     } catch {
       // try the next candidate
     }

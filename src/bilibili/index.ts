@@ -1,11 +1,13 @@
-export type { BilibiliClientOptions, FetchLike, SilentUserPage } from '@/bilibili/client'
+export type { BilibiliClientOptions, SilentUserPage } from '@/bilibili/client'
 export type { CredentialProviderOptions, CredentialSummary, LoadCredentialsOptions } from '@/bilibili/credentials'
 export type { ApiResult, BilibiliCredentials, NavInfo, RoomInfo, SilentUser } from '@/bilibili/types'
+export type { FetchLike } from '@/util/fetch'
 
 export {
   BAD_RESPONSE,
   BilibiliApiError,
   BilibiliClient,
+  briefResult,
   DEFAULT_USER_AGENT,
   describeResult,
   isAlreadyBanned,

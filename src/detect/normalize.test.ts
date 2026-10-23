@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  canonicalForm,
   canonicalize,
-  describeEvasionChar,
+  clip,
+  codePointLabel,
   escapeInvisible,
   findEvasionChars,
   graphemeLength,
@@ -103,6 +105,13 @@ describe('reduceToPeriod', () => {
   })
 })
 
+describe('canonicalForm', () => {
+  test('returns the key with the stripped length multiplicity divides', () => {
+    expect(canonicalForm('爆了！爆了！爆了')).toEqual({ key: '爆了', stripped: 6 })
+    expect(canonicalForm('？？？')).toEqual({ key: '?', stripped: 0 })
+  })
+})
+
 describe('multiplicity', () => {
   test('counts copies of the key', () => {
     expect(multiplicity('爆了爆了爆了', '爆了')).toBe(3)
@@ -117,11 +126,22 @@ describe('display helpers', () => {
     expect(escapeInvisible('a\nb')).toBe('a\\nb')
     expect(escapeInvisible('伞来☂️ 👨‍👩‍👧')).toBe('伞来☂️ 👨‍👩‍👧')
     expect(escapeInvisible('懂‍你')).toBe('懂⟨U+200D⟩你')
+    expect(escapeInvisible('主播\u00AD好\u200B棒\u2800')).toBe('主播⟨U+00AD⟩好⟨U+200B⟩棒⟨U+2800⟩')
+    expect(escapeInvisible('冲\u{E0041}')).toBe('冲⟨U+E0041⟩')
+    expect(escapeInvisible('爱你❤\uFE0F 233')).toBe('爱你❤\uFE0F 233')
   })
 
-  test('describeEvasionChar names known chars', () => {
-    expect(describeEvasionChar('­')).toBe('U+00AD 软连字符')
-    expect(describeEvasionChar('\u{E0021}')).toBe('U+E0021 标签字符')
+  test('codePointLabel pads to four digits', () => {
+    expect(codePointLabel('­')).toBe('U+00AD')
+    expect(codePointLabel('\u{E0021}')).toBe('U+E0021')
+  })
+
+  test('clip never splits an emoji and can mark the cut', () => {
+    expect(clip('🍆奶绿🥖🍆奶绿', 4)).toBe('🍆奶绿🥖')
+    expect(clip('👨‍👩‍👧好好好', 2)).toBe('👨‍👩‍👧好')
+    expect(clip('千舰千舰千舰', 4, '…')).toBe('千舰千…')
+    expect(clip('短', 4, '…')).toBe('短')
+    expect(escapeInvisible(clip('千­舰千舰', 2))).toBe('千⟨U+00AD⟩')
   })
 
   test('graphemeLength counts user-perceived chars', () => {

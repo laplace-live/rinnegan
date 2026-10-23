@@ -6,6 +6,9 @@
 
 import type { ChatMessage } from '@/types'
 
+import { graphemes } from '@/detect/normalize'
+import { compareMessages } from '@/sources/archive'
+
 /** Deterministic PRNG (mulberry32) so failures reproduce. */
 export function seededRandom(seed: number): () => number {
   let state = seed >>> 0
@@ -16,12 +19,6 @@ export function seededRandom(seed: number): () => number {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
-}
-
-const segmenter = new Intl.Segmenter('zh', { granularity: 'grapheme' })
-
-function graphemes(text: string): string[] {
-  return Array.from(segmenter.segment(text), ({ segment }) => segment)
 }
 
 /** Chatterbox's invisible-char presets plus the U+E0020 tag char seen in the wild. */
@@ -117,9 +114,7 @@ function makeMessage(persona: Persona, text: string, timestamp: number, isEmote 
     userType: 0,
     guardType: persona.guardType ?? 0,
     isEmote,
-    isMirror: false,
     medalLevel: 0,
-    wealthLevel: 0,
   }
 }
 
@@ -340,5 +335,5 @@ export function simulateStickerSweep(persona: Persona, startAt: number, random?:
 
 /** Merge streams into one time-ordered feed. */
 export function mergeStreams(...streams: ChatMessage[][]): ChatMessage[] {
-  return streams.flat().sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id))
+  return streams.flat().sort(compareMessages)
 }

@@ -1,6 +1,7 @@
 import type { ChatCompletionResponseFormat } from '@/ai/llm'
 import type { ReviewState } from '@/ai/prompt'
 import type { AiConfig, AiProviderKind, Reviewer, ReviewInput, ReviewResult } from '@/ai/types'
+import type { FetchLike } from '@/util/fetch'
 
 import {
   DECISION_DEFAULTS,
@@ -12,21 +13,23 @@ import {
 import { HttpStatusError } from '@/ai/http'
 import { chatCompletion, describeLlmGap, extractJsonObject, LLM_DEFAULT_BASE, LLM_TIMEOUT_MS } from '@/ai/llm'
 import { buildReviewMessages, buildReviewState, REVIEW_REPLY_SCHEMA } from '@/ai/prompt'
+import { clip } from '@/detect/normalize'
+import { toNumber } from '@/util/guards'
 
 const HOUR_MS = 3_600_000
 const MAX_REASON_LENGTH = 120
 
-/** Defaults per provider: `jev` speaks the Typesafe protocol; `llm` has no default model. */
+/** The only AI defaults: `jev` goes through OpenRouter (one key for both providers); `llm` has no default model. */
 export const DEFAULT_AI_CONFIG: Readonly<Record<AiProviderKind, Readonly<AiConfig>>> = {
   jev: {
     provider: 'jev',
-    protocol: 'typesafe',
-    apiBase: DECISION_DEFAULTS.typesafe.apiBase,
+    protocol: 'openrouter',
+    apiBase: DECISION_DEFAULTS.openrouter.apiBase,
     apiKey: '',
-    model: DECISION_DEFAULTS.typesafe.model,
+    model: DECISION_DEFAULTS.openrouter.model,
     timeoutMs: DECISION_TIMEOUT_MS,
     threshold: 0.8,
-    maxPerHour: 60,
+    maxPerHour: 120,
   },
   llm: {
     provider: 'llm',
@@ -37,7 +40,7 @@ export const DEFAULT_AI_CONFIG: Readonly<Record<AiProviderKind, Readonly<AiConfi
     model: '',
     timeoutMs: LLM_TIMEOUT_MS,
     threshold: 0.8,
-    maxPerHour: 60,
+    maxPerHour: 120,
   },
 }
 
@@ -57,7 +60,7 @@ export class AiBudgetError extends Error {
 }
 
 export interface ReviewerOptions {
-  fetch?: typeof fetch
+  fetch?: FetchLike
   /** Unix ms clock for the hourly budget and latency */
   now?: () => number
 }
@@ -118,20 +121,24 @@ function parseReviewReply(content: string): { probability: number; reason: strin
   const reply = extractJsonObject(content)
   if (!reply) throw new Error('大模型返回内容无法解析为 JSON')
   const { probability, reason } = reply
-  const raw = typeof probability === 'string' && probability.trim() ? Number(probability) : probability
-  if (typeof raw !== 'number' || !Number.isFinite(raw)) throw new Error('大模型返回的概率无效')
+  const raw = toNumber(probability)
+  if (raw === null) throw new Error('大模型返回的概率无效')
   const text = typeof reason === 'string' ? reason.replace(/\s+/g, ' ').trim() : ''
   return {
     // Some models answer in percent despite the schema.
     probability: raw > 1 && raw <= 100 ? raw / 100 : raw,
-    reason: Array.from(text).slice(0, MAX_REASON_LENGTH).join(''),
+    reason: clip(text, MAX_REASON_LENGTH),
   }
 }
 
+/** `79.6%`, floored to 0.1% so a value just under the threshold never prints as equal to it. */
+export function formatProbability(probability: number): string {
+  return `${Math.floor(probability * 1000 + 1e-6) / 10}%`
+}
+
+/** `独轮车概率 79.6%（阈值 80%）`. */
 function describeProbability(probability: number, threshold: number): string {
-  // Floored to 0.1% so a probability just under the threshold never prints as equal to it.
-  const percent = Math.floor(probability * 1000 + 1e-6) / 10
-  return `独轮车概率 ${percent}%（阈值 ${Math.round(threshold * 1000) / 10}%）`
+  return `独轮车概率 ${formatProbability(probability)}（阈值 ${Math.round(threshold * 1000) / 10}%）`
 }
 
 /**

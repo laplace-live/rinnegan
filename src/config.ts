@@ -2,6 +2,11 @@ import type { AiConfig, AiProviderKind, DecisionProtocol } from '@/ai/types'
 import type { DetectorOptions } from '@/detect/detector'
 import type { Pattern } from '@/types'
 
+import { DECISION_DEFAULTS } from '@/ai/decision'
+import { DEFAULT_AI_CONFIG } from '@/ai/reviewer'
+import { PATTERN_LABELS } from '@/report/labels'
+import { errorMessage } from '@/util/guards'
+
 /**
  * How AI review takes part in bans.
  *
@@ -47,6 +52,7 @@ export interface LiveConfig {
 export interface LoginSyncConfig {
   /** `uuid@password` from the LAPLACE Login Sync extension; empty means dry-run */
   token: string
+  /** Empty for the SDK's public server */
   baseURL: string
   authKey: string
   /** Re-pull cookies this often */
@@ -64,7 +70,8 @@ export interface RinneganConfig {
   storeUrl: string
   /** Lift a ban once the user spends this much CNY in the room afterwards (0 disables) */
   unbanSpendCny: number
-  ai: AiConfig & { mode: AiMode }
+  /** Unset fields take the provider's defaults (`resolveAiConfig`) */
+  ai: Partial<AiConfig> & { mode: AiMode }
 }
 
 export const DEFAULT_CONFIG: RinneganConfig = {
@@ -79,7 +86,7 @@ export const DEFAULT_CONFIG: RinneganConfig = {
   },
   loginSync: {
     token: '',
-    baseURL: 'https://login-sync.laplace.cn',
+    baseURL: '',
     authKey: '',
     refreshMinutes: 30,
   },
@@ -97,17 +104,7 @@ export const DEFAULT_CONFIG: RinneganConfig = {
   },
   storeUrl: 'sqlite:data/rinnegan.sqlite',
   unbanSpendCny: 0,
-  ai: {
-    mode: 'off',
-    provider: 'jev',
-    protocol: 'openrouter',
-    apiBase: '',
-    apiKey: '',
-    model: '',
-    timeoutMs: 8000,
-    threshold: 0.8,
-    maxPerHour: 120,
-  },
+  ai: { mode: 'off' },
 }
 
 /** Partial config as read from a file, env or flags. */
@@ -123,10 +120,16 @@ export type ConfigLayer = {
   ai?: Partial<RinneganConfig['ai']>
 }
 
-const PATTERNS: readonly Pattern[] = ['loop', 'burst', 'template', 'blend', 'flood']
+const PATTERNS = Object.keys(PATTERN_LABELS) as Pattern[]
 const AI_MODES: readonly AiMode[] = ['off', 'confirm', 'assist']
-const AI_PROVIDERS: readonly AiProviderKind[] = ['jev', 'llm']
-const DECISION_PROTOCOLS: readonly DecisionProtocol[] = ['typesafe', 'openrouter']
+const AI_PROVIDERS = Object.keys(DEFAULT_AI_CONFIG) as AiProviderKind[]
+const DECISION_PROTOCOLS = Object.keys(DECISION_DEFAULTS) as DecisionProtocol[]
+
+/** `object` without its undefined fields; undefined when none are left. */
+export function defined<T extends object>(object: T): Partial<T> | undefined {
+  const entries = Object.entries(object).filter(([, value]) => value !== undefined)
+  return entries.length ? (Object.fromEntries(entries) as Partial<T>) : undefined
+}
 
 /** Comma/space separated positive integers; throws on anything else. */
 export function parseIdList(value: string, label: string): number[] {
@@ -161,68 +164,38 @@ function pick<T extends string>(value: string, allowed: readonly T[], label: str
   return value as T
 }
 
-/** Config layer from environment variables (Bun loads `.env` automatically). */
+/** Config layer from environment variables (Bun loads `.env` automatically); enums are checked by `validateConfig`. */
 export function configFromEnv(env: Record<string, string | undefined> = process.env): ConfigLayer {
-  const layer: ConfigLayer = {}
-  const live: Partial<LiveConfig> = {}
-  const loginSync: Partial<LoginSyncConfig> = {}
-  const ai: Partial<RinneganConfig['ai']> = {}
-  const set = (name: string, apply: (value: string) => void) => {
-    const value = env[name]?.trim()
-    if (value) apply(value)
+  const get = (name: string) => env[name]?.trim() || undefined
+  const parsed = <T>(name: string, parse: (value: string, label: string) => T) => {
+    const value = get(name)
+    return value === undefined ? undefined : parse(value, name)
   }
-  set('RINNEGAN_EVENT_URL', value => {
-    live.url = value
-  })
-  set('RINNEGAN_EVENT_TOKEN', value => {
-    live.token = value
-  })
-  set('RINNEGAN_ROOMS', value => {
-    live.rooms = parseIdList(value, 'RINNEGAN_ROOMS')
-  })
-  set('LOGIN_SYNC_TOKEN', value => {
-    loginSync.token = value
-  })
-  set('LOGIN_SYNC_URL', value => {
-    loginSync.baseURL = value
-  })
-  set('LOGIN_SYNC_AUTH_KEY', value => {
-    loginSync.authKey = value
-  })
-  set('RINNEGAN_STORE_URL', value => {
-    layer.storeUrl = value
-  })
-  set('RINNEGAN_LOG_DIR', value => {
-    layer.logDir = value
-  })
-  set('RINNEGAN_REPORT_DIR', value => {
-    layer.reportDir = value
-  })
-  set('RINNEGAN_AI_MODE', value => {
-    ai.mode = pick(value, AI_MODES, 'RINNEGAN_AI_MODE')
-  })
-  set('RINNEGAN_AI_PROVIDER', value => {
-    ai.provider = pick(value, AI_PROVIDERS, 'RINNEGAN_AI_PROVIDER')
-  })
-  set('RINNEGAN_AI_PROTOCOL', value => {
-    ai.protocol = pick(value, DECISION_PROTOCOLS, 'RINNEGAN_AI_PROTOCOL')
-  })
-  set('RINNEGAN_AI_BASE', value => {
-    ai.apiBase = value
-  })
-  set('RINNEGAN_AI_API_KEY', value => {
-    ai.apiKey = value
-  })
-  set('RINNEGAN_AI_MODEL', value => {
-    ai.model = value
-  })
-  set('RINNEGAN_AI_THRESHOLD', value => {
-    ai.threshold = parseNumber(value, 'RINNEGAN_AI_THRESHOLD')
-  })
-  if (Object.keys(live).length) layer.live = live
-  if (Object.keys(loginSync).length) layer.loginSync = loginSync
-  if (Object.keys(ai).length) layer.ai = ai
-  return layer
+  const layer: ConfigLayer = {
+    logDir: get('RINNEGAN_LOG_DIR'),
+    reportDir: get('RINNEGAN_REPORT_DIR'),
+    storeUrl: get('RINNEGAN_STORE_URL'),
+    live: defined({
+      url: get('RINNEGAN_EVENT_URL'),
+      token: get('RINNEGAN_EVENT_TOKEN'),
+      rooms: parsed('RINNEGAN_ROOMS', parseIdList),
+    }),
+    loginSync: defined({
+      token: get('LOGIN_SYNC_TOKEN'),
+      baseURL: get('LOGIN_SYNC_URL'),
+      authKey: get('LOGIN_SYNC_AUTH_KEY'),
+    }),
+    ai: defined({
+      mode: get('RINNEGAN_AI_MODE') as AiMode | undefined,
+      provider: get('RINNEGAN_AI_PROVIDER') as AiProviderKind | undefined,
+      protocol: get('RINNEGAN_AI_PROTOCOL') as DecisionProtocol | undefined,
+      apiBase: get('RINNEGAN_AI_BASE'),
+      apiKey: get('RINNEGAN_AI_API_KEY'),
+      model: get('RINNEGAN_AI_MODEL'),
+      threshold: parsed('RINNEGAN_AI_THRESHOLD', parseNumber),
+    }),
+  }
+  return defined(layer) ?? {}
 }
 
 /** Read a JSON config file shaped like {@link ConfigLayer}; missing optional file → empty layer. */
@@ -236,7 +209,7 @@ export async function configFromFile(path: string, required: boolean): Promise<C
   try {
     parsed = JSON.parse(await file.text())
   } catch (error) {
-    throw new Error(`配置文件 ${path} 不是合法 JSON：${error instanceof Error ? error.message : String(error)}`)
+    throw new Error(`配置文件 ${path} 不是合法 JSON：${errorMessage(error)}`)
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new Error(`配置文件 ${path} 必须是 JSON 对象`)
@@ -276,5 +249,8 @@ export function validateConfig(config: RinneganConfig): void {
   }
   if (detector.windowMs !== undefined && detector.windowMs < 60_000) throw new Error('detector.windowMs 至少为 60000')
   pick(ai.mode, AI_MODES, 'ai.mode')
+  // Blank counts as unset, as in resolveAiConfig
+  if (ai.provider?.trim()) pick(ai.provider.trim(), AI_PROVIDERS, 'ai.provider')
+  if (ai.protocol?.trim()) pick(ai.protocol.trim(), DECISION_PROTOCOLS, 'ai.protocol')
   if (config.unbanSpendCny < 0) throw new Error('unbanSpendCny 不能为负')
 }

@@ -37,14 +37,6 @@ export function buildSourceUrl(url: string, rooms: readonly number[]): string {
   return parsed.toString()
 }
 
-/** URL with the token masked, safe to print. */
-export function maskSourceUrl(url: string): string {
-  const parsed = new URL(url)
-  if (parsed.searchParams.has('token')) parsed.searchParams.set('token', '***')
-  if (parsed.password) parsed.password = '***'
-  return parsed.toString()
-}
-
 /** First reconnect delay; doubles per failed attempt up to {@link RECONNECT_MAX_MS}. */
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 30_000
@@ -64,6 +56,9 @@ export class LiveSource {
   #stopped = false
   #attempts = 0
   readonly #seen = new Set<string>()
+  /** Ring of the remembered ids in arrival order; evicting via the Set's iterator walks its tombstones */
+  readonly #seenOrder: string[] = []
+  #seenHead = 0
   #retry: ReturnType<typeof setTimeout> | null = null
 
   constructor(options: LiveSourceOptions) {
@@ -85,10 +80,6 @@ export class LiveSource {
       options.onState?.(state, close)
       if (state === ConnectionState.DISCONNECTED) this.#scheduleReconnect()
     })
-  }
-
-  get state(): ConnectionState {
-    return this.#client.getConnectionState()
   }
 
   /** Connect; a failed first attempt keeps retrying in the background instead of throwing. */
@@ -128,6 +119,16 @@ export class LiveSource {
     }, delay)
   }
 
+  #remember(id: string): void {
+    if (this.#seenOrder.length < SEEN_IDS) this.#seenOrder.push(id)
+    else {
+      this.#seen.delete(this.#seenOrder[this.#seenHead] as string)
+      this.#seenOrder[this.#seenHead] = id
+      this.#seenHead = (this.#seenHead + 1) % SEEN_IDS
+    }
+    this.#seen.add(id)
+  }
+
   #handle(event: LaplaceEvent): void {
     // The SDK also hands over bridge control frames such as `established`; real events carry a room.
     if (typeof event !== 'object' || event === null || typeof event.origin !== 'number') return
@@ -138,8 +139,7 @@ export class LiveSource {
     }
     if (typeof event.id === 'string') {
       if (this.#seen.has(event.id)) return
-      this.#seen.add(event.id)
-      if (this.#seen.size > SEEN_IDS) this.#seen.delete(this.#seen.values().next().value as string)
+      this.#remember(event.id)
     }
     if (event.type === 'message') {
       const message = toChatMessage(event, { includeMirror: this.#options.includeMirror })

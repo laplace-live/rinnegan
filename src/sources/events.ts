@@ -1,27 +1,21 @@
-import type { LaplaceEvent } from '@laplace.live/event-types'
+import type { LaplaceEvent, Message } from '@laplace.live/event-types'
 
 import type { ChatMessage, SpendEvent } from '@/types'
 
-/** Why a `message` event was left out of detection. */
-export type SkipReason = 'not-message' | 'anonymous' | 'auto-danmaku' | 'mirror' | 'empty' | 'mock'
+import { isRecord, toNumber } from '@/util/guards'
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
+/** Why a `message` event was left out of detection. */
+export type SkipReason = 'anonymous' | 'auto-danmaku' | 'mirror' | 'empty' | 'mock'
 
 function num(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+  return toNumber(value) ?? 0
 }
 
 /**
  * Normalize a LaplaceEvent `message` into a {@link ChatMessage}, or say why it can't be judged: no uid
  * (anonymous event stream), platform auto-danmaku (红包/天选, `sendType` ≠ 0) or a 跨房弹幕 mirror.
  */
-export function toChatMessage(
-  event: LaplaceEvent,
-  options: { includeMirror?: boolean } = {}
-): ChatMessage | SkipReason {
-  if (event.type !== 'message') return 'not-message'
+export function toChatMessage(event: Message, options: { includeMirror?: boolean } = {}): ChatMessage | SkipReason {
   if ('mock' in event && (event as { mock?: unknown }).mock === true) return 'mock'
   if (!event.uid) return 'anonymous'
   if (event.sendType) return 'auto-danmaku'
@@ -38,9 +32,7 @@ export function toChatMessage(
     userType: num(event.userType),
     guardType: num(event.guardType),
     isEmote: isRecord(emote) && typeof emote.emoticon_unique === 'string' && emote.emoticon_unique.length > 0,
-    isMirror: event.isMirror === true,
     medalLevel: num(event.medal?.level),
-    wealthLevel: num(event.wealthMedalLevel),
   }
 }
 

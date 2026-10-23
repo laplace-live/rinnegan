@@ -29,7 +29,6 @@ export interface SilentUser {
   createdAt: string | null
   /** Seconds until the ban ends, when Bilibili says; null for permanent or unknown */
   remainingSec: number | null
-  raw: unknown
 }
 
 export interface NavInfo {

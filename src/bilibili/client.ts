@@ -1,12 +1,15 @@
 import type { ApiResult, BilibiliCredentials, NavInfo, RoomInfo, SilentUser } from '@/bilibili/types'
+import type { FetchLike } from '@/util/fetch'
 
-/** `fetch` or anything shaped like it. Bun's `typeof fetch` also demands `fetch.preconnect`, which fakes lack. */
-export type FetchLike = (input: string, init: RequestInit) => Response | Promise<Response>
+import { clip, stripEvasionChars } from '@/detect/normalize'
+import { errorMessage, isRecord, toId, toNumber } from '@/util/guards'
 
 /** How {@link BilibiliClient} reaches Bilibili. */
 export interface BilibiliClientOptions {
   /** Called before every authenticated request, so rotated cookies apply without a new client */
   credentials: () => BilibiliCredentials | Promise<BilibiliCredentials>
+  /** Called once when Bilibili rejects the cookies (see {@link isAuthFailure}); the request is retried afterwards */
+  onAuthFailure?: (result: ApiResult) => void | Promise<void>
   fetch?: FetchLike
   /** Desktop Chrome by default */
   userAgent?: string
@@ -59,12 +62,14 @@ export class BilibiliApiError extends Error {
 /** Bilibili web APIs for room moderation. The silent-user methods never throw: check the returned {@link ApiResult}. */
 export class BilibiliClient {
   readonly #credentials: BilibiliClientOptions['credentials']
+  readonly #onAuthFailure: BilibiliClientOptions['onAuthFailure']
   readonly #fetch: FetchLike | undefined
   readonly #userAgent: string
   readonly #timeoutMs: number
 
   constructor(options: BilibiliClientOptions) {
     this.#credentials = options.credentials
+    this.#onAuthFailure = options.onAuthFailure
     this.#fetch = options.fetch
     this.#userAgent = options.userAgent ?? DEFAULT_USER_AGENT
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -148,7 +153,7 @@ export class BilibiliClient {
     return [...users.values()]
   }
 
-  async #post(endpoint: string, roomId: number, fields: FormField[]): Promise<ApiResult> {
+  async #post(endpoint: string, roomId: number, fields: FormField[], retried = false): Promise<ApiResult> {
     let credentials: BilibiliCredentials
     try {
       credentials = await this.#credentials()
@@ -157,12 +162,15 @@ export class BilibiliClient {
     }
     const { cookie, csrf } = credentials
     const form: FormField[] = [...fields, ['csrf_token', csrf], ['csrf', csrf], ['visit_id', '']]
-    return this.#send(`${BANNED_API}/${endpoint}`, {
+    const result = await this.#send(`${BANNED_API}/${endpoint}`, {
       method: 'POST',
       headers: this.#headers(`${LIVE_ORIGIN}/${roomId}`, cookie, true),
       // encodeURIComponent, not URLSearchParams: Bilibili's own frontend sends spaces as %20, not +
       body: form.map(([name, value]) => `${name}=${encodeURIComponent(String(value))}`).join('&'),
     })
+    if (retried || !this.#onAuthFailure || !isAuthFailure(result)) return result
+    await this.#onAuthFailure(result)
+    return this.#post(endpoint, roomId, fields, true)
   }
 
   async #send(url: string, init: RequestInit): Promise<ApiResult> {
@@ -195,24 +203,13 @@ export class BilibiliClient {
   }
 }
 
-const segmenter = new Intl.Segmenter('zh', { granularity: 'grapheme' })
-
 /**
- * The `msg` actually sent for a ban reason: invisible format characters dropped, whitespace collapsed, trimmed and
- * capped at 60 graphemes; `独轮车` when nothing is left.
+ * The `msg` actually sent for a ban reason: tool-inserted invisible chars dropped (emoji sequences kept), whitespace
+ * collapsed, trimmed and capped at 60 graphemes; `独轮车` when nothing is left.
  */
 export function normalizeReason(reason: string): string {
-  const text = reason
-    .replace(/\p{Cf}/gu, '')
-    .replace(/[\s\p{Cc}]+/gu, ' ')
-    .trim()
-  let capped = ''
-  let count = 0
-  for (const { segment } of segmenter.segment(text)) {
-    if (count++ === MAX_REASON_GRAPHEMES) break
-    capped += segment
-  }
-  return capped.trimEnd() || DEFAULT_REASON
+  const text = stripEvasionChars(reason).replace(/\s+/gu, ' ').trim()
+  return clip(text, MAX_REASON_GRAPHEMES).trimEnd() || DEFAULT_REASON
 }
 
 /** Bilibili rejected the cookies (-101 未登录, -111 csrf 校验失败, or HTTP 401/403): refresh credentials and retry. */
@@ -239,6 +236,11 @@ export function isAlreadyBanned(result: ApiResult): boolean {
 /** Heuristic: a failed unban whose message says the user isn't silenced, e.g. `该用户未被禁言`. */
 export function isNotBanned(result: ApiResult): boolean {
   return !result.ok && !PERMISSION_DENIED.test(result.message) && NOT_BANNED.test(result.message)
+}
+
+/** The parts of a result worth recording, without the response body. */
+export function briefResult(result: ApiResult): { ok: boolean; code: number; message: string; status: number } {
+  return { ok: result.ok, code: result.code, message: result.message, status: result.status }
 }
 
 /** One-line description of a failed result for logs, e.g. `账号未登录（code -101）`. */
@@ -295,7 +297,6 @@ function parseSilentUser(raw: unknown): SilentUser | null {
     operatorName: toText(raw.admin_name ?? raw.operator_name ?? (hasTarget ? raw.name : null)) || null,
     createdAt: toTimestamp(raw.ctime ?? raw.created_at),
     remainingSec: remaining !== null && remaining > 0 ? remaining : null,
-    raw,
   }
 }
 
@@ -318,22 +319,6 @@ function toTimestamp(value: unknown): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 19).replace('T', ' ')
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-/** Finite number from a number or a numeric string. */
-function toNumber(value: unknown): number | null {
-  const n = typeof value === 'string' && value.trim() !== '' ? Number(value) : value
-  return typeof n === 'number' && Number.isFinite(n) ? n : null
-}
-
-/** Positive safe integer, e.g. a uid or room id. */
-function toId(value: unknown): number | null {
-  const n = toNumber(value)
-  return n !== null && Number.isSafeInteger(n) && n > 0 ? n : null
-}
-
 function toCount(value: unknown): number | null {
   const n = toNumber(value)
   return n !== null && Number.isSafeInteger(n) && n >= 0 ? n : null
@@ -342,8 +327,4 @@ function toCount(value: unknown): number | null {
 function toText(value: unknown): string | null {
   if (typeof value === 'string') return value
   return typeof value === 'number' && Number.isFinite(value) ? String(value) : null
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

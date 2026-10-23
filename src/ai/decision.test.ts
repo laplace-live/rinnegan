@@ -3,9 +3,9 @@ import { describe, expect, test } from 'bun:test'
 import type { DecisionOptions } from '@/ai/decision'
 
 import { evaluateDecision, readNoulAnswer } from '@/ai/decision'
-import { readPath } from '@/ai/http'
 import { buildReviewState } from '@/ai/prompt'
 import { fakeFetch, jsonResponse, only, pending, SAMPLE_UID, sampleInput } from '@/ai/test-helpers'
+import { readPath } from '@/util/guards'
 
 const KEY = 'ts-test-secret'
 const state = buildReviewState(sampleInput())
