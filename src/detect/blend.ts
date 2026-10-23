@@ -90,8 +90,11 @@ export class TrendTape {
     }
   }
 
-  /** Message completing the first line to reach the threshold in [`start`, `end`), ignoring `self` and `avoid`. */
-  firstTrigger(start: number, end: number, self: number, avoid: readonly string[]): TapeEntry | null {
+  /**
+   * Message completing the first line to reach the threshold in [`start`, `end`), ignoring `self`, the exact lines in
+   * `avoid` and any form of the line keyed `besides`.
+   */
+  firstTrigger(start: number, end: number, self: number, avoid: readonly string[], besides?: string): TapeEntry | null {
     const scan = ++this.#scan
     if (this.#counters.size > 4096) this.#counters.clear()
     for (let i = this.#lowerBound(start); i < this.#entries.length; i++) {
@@ -99,6 +102,7 @@ export class TrendTape {
       if (entry.at >= end) break
       // Half the scans avoid nothing; skipping the native call there is measurably faster.
       if (!entry.countable || entry.uid === self || (avoid.length > 0 && avoid.includes(entry.text))) continue
+      if (besides !== undefined && related(entry.key, besides)) continue
       let counter = this.#counters.get(entry.text)
       if (!counter) {
         counter = { scan: 0, sends: 0, last: 0, users: [] }
@@ -176,6 +180,8 @@ interface Hypothesis {
   anchor: number
   /** Last triggered lines, for avoid-repeat */
   recent: string[]
+  /** Key of the line behind `anchor` */
+  line: string
   lags: number[]
   /** Median of `lags` */
   lag: number
@@ -196,6 +202,14 @@ interface Change {
   /** Bit `i` set when hypothesis `i`'s cooldown also ruled out another line */
   ruledOut: number
   /** Bit `i` set when another line also completed before the send, under hypothesis `i` */
+  contested: number
+}
+
+/** Minimums a {@link TriggerFit} must meet; `share` is of the line changes. */
+export interface TriggerGate {
+  hits: number
+  share: number
+  ruledOut: number
   contested: number
 }
 
@@ -247,16 +261,22 @@ function autoCooldownMs(cpm: number): number {
   return Math.min(AUTO_CEILING_SEC, Math.max(AUTO_FLOOR_SEC, Math.round(AUTO_STEALTH_K / cpm))) * 1000
 }
 
-/** Move `hypothesis`'s anchor to a trigger of `text` at `at`, remembering the line for avoid-repeat. */
-function anchorAt(hypothesis: Hypothesis, at: number, text: string): void {
+/** Move `hypothesis`'s anchor to a trigger of `line` at `at`, remembering the line for avoid-repeat. */
+function anchorAt(hypothesis: Hypothesis, at: number, line: { text: string; key: string }): void {
   hypothesis.anchor = at
-  hypothesis.recent.push(text)
+  hypothesis.line = line.key
+  hypothesis.recent.push(line.text)
   if (hypothesis.recent.length > AVOID_LAST) hypothesis.recent.shift()
 }
 
 /** 自动融入 cuts long lines, so a send may be a prefix of the line it copied. */
 function sameLine(lineKey: string, sendKey: string): boolean {
   return lineKey === sendKey || (sendKey.length >= PREFIX_KEY_LENGTH && lineKey.startsWith(sendKey))
+}
+
+/** Two keys for one line: the same, or one cut from the other. */
+function related(a: string, b: string): boolean {
+  return sameLine(a, b) || sameLine(b, a)
 }
 
 /**
@@ -278,6 +298,7 @@ export class TriggerReplay {
       ...setting,
       anchor: first.at - DEFAULT_LAG_MS,
       recent: [first.text],
+      line: first.key,
       lags: [],
       lag: DEFAULT_LAG_MS,
       hits: 0,
@@ -318,10 +339,16 @@ export class TriggerReplay {
     if (drop > 0) this.#changes.splice(0, drop)
   }
 
-  /** The setting with the most hits among the judged sends, or null below `minHits`. */
-  fit(minHits: number): TriggerFit | null {
-    const best = this.#hypotheses.reduce((top, hypothesis) => (hypothesis.hits > top.hits ? hypothesis : top))
-    if (best.hits === 0 || best.hits < minHits) return null
+  /** The setting with the most hits among those meeting `gate`, or null when none does. */
+  fit(gate: TriggerGate): TriggerFit | null {
+    const minHits = Math.max(1, gate.hits, gate.share * this.#changes.length)
+    let best: Hypothesis | null = null
+    for (const hypothesis of this.#hypotheses) {
+      if (hypothesis.hits < minHits || hypothesis.ruledOut < gate.ruledOut || hypothesis.contested < gate.contested)
+        continue
+      if (!best || hypothesis.hits > best.hits) best = hypothesis
+    }
+    if (!best) return null
     const bit = 1 << this.#hypotheses.indexOf(best)
     const keys = new Set<string>()
     for (const change of this.#changes) if (change.mask & bit) keys.add(change.key)
@@ -354,28 +381,25 @@ export class TriggerReplay {
       if (!trigger) break
       if (resends(trigger.text, this.#last.text) && trigger.at + hypothesis.lag - this.#last.at < DUPLICATE_MS) {
         // The dropped resend still restarted the cooldown.
-        anchorAt(hypothesis, trigger.at, trigger.text)
+        anchorAt(hypothesis, trigger.at, trigger)
         start = this.#wakeAt(tape, hypothesis)
         continue
       }
       const delay = send.at - trigger.at
       if (delay > MAX_TRIGGER_LAG_MS || !sameLine(trigger.key, send.key)) break
-      const skipped = tape.firstTrigger(hypothesis.anchor, start, this.#uid, [
-        ...avoid,
-        hypothesis.recent.at(-1) as string,
-      ])
-      const rival = tape.firstTrigger(start, send.at, this.#uid, [...avoid, trigger.text])
+      const skipped = tape.firstTrigger(hypothesis.anchor, start, this.#uid, avoid, hypothesis.line)
+      const rival = tape.firstTrigger(start, send.at, this.#uid, avoid, trigger.key)
       hypothesis.lags.push(delay)
       if (hypothesis.lags.length > LAGS_KEPT) hypothesis.lags.shift()
       hypothesis.lag = lowerMedian(hypothesis.lags)
-      anchorAt(hypothesis, trigger.at, trigger.text)
+      anchorAt(hypothesis, trigger.at, trigger)
       return (
         HIT | (skipped !== null && !this.#joined(skipped, send.at) ? RULED_OUT : 0) | (rival !== null ? CONTESTED : 0)
       )
     }
     // Sent inside this setting's cooldown, so not by 自动融入 under it: the cooldown and avoid list stay put.
     if (send.at < start) return 0
-    anchorAt(hypothesis, send.at - hypothesis.lag, send.text)
+    anchorAt(hypothesis, send.at - hypothesis.lag, send)
     return 0
   }
 

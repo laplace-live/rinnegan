@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { type ReplaySend, type TapeEntry, TrendTape, TriggerReplay } from '@/detect/blend'
+import { type ReplaySend, type TapeEntry, TrendTape, type TriggerGate, TriggerReplay } from '@/detect/blend'
 import { canonicalize } from '@/detect/normalize'
 
 const BOT = 1
@@ -61,6 +61,11 @@ function play(room: Line[], uid = BOT): TriggerReplay {
   }
   if (!replay) throw new Error('no send followed the crowd')
   return replay
+}
+
+/** A gate needing only `hits`. */
+function gate(hits: number): TriggerGate {
+  return { hits, share: 0, ruledOut: 0, contested: 0 }
 }
 
 /** `rounds` lines cycling through `lines`. */
@@ -180,12 +185,12 @@ describe('TriggerReplay', () => {
   test('a 10 s cooldown bot is fit with its setting and delay', () => {
     const lines = cycle(13)
     const replay = play([...trendRoom(lines), ...tenSecondBot(lines, [500, 650, 600, 700, 550])])
-    const fit = replay.fit(12)
+    const fit = replay.fit(gate(12))
     expect(fit).toMatchObject({ hits: 12, changes: 12, cooldownMs: 10_000, avoid: false })
     expect(fit?.lagMs).toBeGreaterThanOrEqual(550)
     expect(fit?.lagMs).toBeLessThanOrEqual(650)
     expect(fit?.keys).toEqual(new Set(MEMES))
-    expect(replay.fit(13)).toBeNull()
+    expect(replay.fit(gate(13))).toBeNull()
   })
 
   test('the same lines at off times get no hits', () => {
@@ -197,14 +202,14 @@ describe('TriggerReplay', () => {
       uid: HUMAN,
       text,
     }))
-    expect(play([...trendRoom(lines), ...human], HUMAN).fit(1)).toBeNull()
+    expect(play([...trendRoom(lines), ...human], HUMAN).fit(gate(1))).toBeNull()
   })
 
   test('an avoid-repeat bot is fit with avoid on', () => {
     const lines = Array.from({ length: 13 }, (_, r) => `新梗${r}`)
     // After each cooldown the crowd revives the bot's line from two rounds back; 避免重复 skips its last 3.
     const echoes = lines.flatMap((_, r) => chant(lines[Math.max(0, r - 2)] as string, r * ROUND_MS + 10_500))
-    const fit = play([...trendRoom(lines), ...echoes, ...tenSecondBot(lines)]).fit(1)
+    const fit = play([...trendRoom(lines), ...echoes, ...tenSecondBot(lines)]).fit(gate(1))
     expect(fit).toMatchObject({ hits: 12, changes: 12, cooldownMs: 10_000, avoid: true })
   })
 
@@ -217,7 +222,7 @@ describe('TriggerReplay', () => {
       ...chant(`梗${r}`, r * 5000 + 2500, CROWD, 100),
       ...chant(`诱饵${r}`, r * 5000 + 4400, DECOYS, 100),
     ]).flat()
-    expect(play(room).fit(1)).toMatchObject({ hits: 12, changes: 12, cooldownMs: 2000, avoid: false })
+    expect(play(room).fit(gate(1))).toMatchObject({ hits: 12, changes: 12, cooldownMs: 2000, avoid: false })
   })
 
   test('a resend Bilibili would have let through is not excused', () => {
@@ -229,7 +234,7 @@ describe('TriggerReplay', () => {
       ...chant(`梗${r}`, r * 8000 + 5600),
       ...chant(`诱饵${r}`, r * 8000 + 6500, DECOYS),
     ]).flat()
-    expect(play(room).fit(1)).toMatchObject({ hits: 12, changes: 12, cooldownMs: 7000 })
+    expect(play(room).fit(gate(1))).toMatchObject({ hits: 12, changes: 12, cooldownMs: 7000 })
   })
 
   test('a cut resend Bilibili dropped is still followed', () => {
@@ -243,13 +248,17 @@ describe('TriggerReplay', () => {
         ...chant(`诱饵${r}`, r * 5000 + 4400, DECOYS, 100),
       ]
     }).flat()
-    expect(play(room).fit(1)).toMatchObject({ hits: 12, changes: 12, cooldownMs: 2000 })
+    expect(play(room).fit(gate(1))).toMatchObject({ hits: 12, changes: 12, cooldownMs: 2000 })
   })
 
   test('a send cut at the length limit still matches its line', () => {
     const lines = cycle(13, LONG_LINES)
     const cut = tenSecondBot(lines).map(send => ({ ...send, text: send.text.slice(0, 20) }))
-    expect(play([...trendRoom(lines), ...cut]).fit(1)).toMatchObject({ hits: 12, changes: 12, cooldownMs: 10_000 })
+    expect(play([...trendRoom(lines), ...cut]).fit(gate(1))).toMatchObject({
+      hits: 12,
+      changes: 12,
+      cooldownMs: 10_000,
+    })
   })
 
   test('manual sends are not counted and leave the cooldown alone', () => {
@@ -257,16 +266,16 @@ describe('TriggerReplay', () => {
     const room = [...trendRoom(lines), ...tenSecondBot(lines)]
     // Typed mid-cooldown: had they restarted it, the next trend would fall inside.
     const manual = lines.map((_, r) => ({ at: r * ROUND_MS + 5000, uid: BOT, text: `手打${r}` }))
-    const fit = play(room).fit(1)
+    const fit = play(room).fit(gate(1))
     expect(fit).toMatchObject({ hits: 12, changes: 12, cooldownMs: 10_000 })
-    expect(play([...room, ...manual]).fit(1)).toEqual(fit)
+    expect(play([...room, ...manual]).fit(gate(1))).toEqual(fit)
   })
 
   test('a send inside the cooldown leaves it alone', () => {
     const lines = cycle(13)
     // Typing the previous round's line mid-cooldown: had that restarted the cooldown, the next trend would fall inside.
     const typed = lines.map((_, r) => ({ at: r * ROUND_MS + 5000, uid: BOT, text: lines[(r + 2) % 3] as string }))
-    const fit = play([...trendRoom(lines), ...tenSecondBot(lines), ...typed]).fit(1)
+    const fit = play([...trendRoom(lines), ...tenSecondBot(lines), ...typed]).fit(gate(1))
     expect(fit).toMatchObject({ hits: 12, cooldownMs: 10_000 })
   })
 
@@ -274,8 +283,35 @@ describe('TriggerReplay', () => {
     const lines = cycle(13)
     // The decoy completes inside each cooldown; a rival completes right after each line, before the bot sends it.
     const rivals = lines.flatMap((_, r) => chant(`对手${r}`, r * ROUND_MS + 500, DECOYS, 100))
-    const fit = play([...trendRoom(lines), ...rivals, ...tenSecondBot(lines)]).fit(1)
+    const fit = play([...trendRoom(lines), ...rivals, ...tenSecondBot(lines)]).fit(gate(1))
     expect(fit).toMatchObject({ hits: 12, ruledOut: 12, contested: 12, cooldownMs: 10_000 })
+  })
+
+  test('a punctuated copy of the same line is neither a rival nor a skipped line', () => {
+    const lines = cycle(13)
+    // The crowd re-sends each line with a ！ right after it completes and again mid-cooldown: the same line by key.
+    const variants = lines.flatMap((text, r) => [
+      ...chant(`${text}！`, r * ROUND_MS + 500, DECOYS, 100),
+      ...chant(`${text}！`, r * ROUND_MS + 5000, DECOYS),
+    ])
+    const fit = play([
+      ...lines.flatMap((text, r) => chant(text, r * ROUND_MS)),
+      ...variants,
+      ...tenSecondBot(lines),
+    ]).fit(gate(12))
+    expect(fit).toMatchObject({ hits: 12, ruledOut: 0, contested: 0 })
+  })
+
+  test('fit returns the setting with the most hits among those meeting the gate', () => {
+    const lines = cycle(13)
+    const rivals = lines.flatMap((_, r) => chant(`对手${r}`, r * ROUND_MS + 500, DECOYS, 100))
+    const replay = play([...trendRoom(lines), ...rivals, ...tenSecondBot(lines)])
+    const ban = { hits: 12, share: 0.9, ruledOut: 3, contested: 3 }
+    expect(replay.fit(ban)).toMatchObject({ hits: 12, cooldownMs: 10_000 })
+    expect(replay.fit({ ...ban, contested: 13 })).toBeNull()
+    expect(replay.fit({ ...ban, hits: 13 })).toBeNull()
+    // Without rivals nothing contests the bot's choice.
+    expect(play([...trendRoom(lines), ...tenSecondBot(lines)]).fit(ban)).toBeNull()
   })
 
   test("a line the user joined mid-cooldown wasn't ruled out", () => {
@@ -283,7 +319,7 @@ describe('TriggerReplay', () => {
     // An early rival trends inside each cooldown and the bot's user copies it 3 s later, by hand.
     const rivals = lines.flatMap((_, r) => chant(`对手${r}`, r * ROUND_MS + 1600, DECOYS))
     const copies = lines.map((_, r) => ({ at: r * ROUND_MS + 5000, uid: BOT, text: `对手${r}` }))
-    const fit = play([...trendRoom(lines), ...rivals, ...copies, ...tenSecondBot(lines)]).fit(1)
+    const fit = play([...trendRoom(lines), ...rivals, ...copies, ...tenSecondBot(lines)]).fit(gate(1))
     expect(fit).toMatchObject({ hits: 12, ruledOut: 0, cooldownMs: 10_000 })
   })
 
@@ -292,13 +328,13 @@ describe('TriggerReplay', () => {
     const lines = Array.from({ length: 13 }, (_, r) => `口号${r}`)
     const room = lines.flatMap((text, r) => chant(text, r * 30_000))
     const human = lines.map((text, r) => ({ at: r * 30_000 + 400 + 700 + (r % 3) * 400, uid: HUMAN, text }))
-    expect(play([...room, ...human], HUMAN).fit(1)).toMatchObject({ hits: 12, ruledOut: 0, contested: 0 })
+    expect(play([...room, ...human], HUMAN).fit(gate(1))).toMatchObject({ hits: 12, ruledOut: 0, contested: 0 })
   })
 
   test('sending the same line again is not a change', () => {
     // 老公天下第一, 主播好帅, 主播好帅, 下次一定, 下次一定, …: each line trends twice, a cooldown apart
     const lines = Array.from({ length: 13 }, (_, r) => MEMES[Math.ceil(r / 2) % MEMES.length] as string)
-    const fit = play([...trendRoom(lines), ...tenSecondBot(lines)]).fit(1)
+    const fit = play([...trendRoom(lines), ...tenSecondBot(lines)]).fit(gate(1))
     expect(fit).toMatchObject({ hits: 6, changes: 6, cooldownMs: 10_000 })
   })
 
@@ -306,8 +342,8 @@ describe('TriggerReplay', () => {
     const lines = cycle(13)
     const replay = play([...trendRoom(lines), ...tenSecondBot(lines)])
     replay.forget(7 * ROUND_MS)
-    expect(replay.fit(1)).toMatchObject({ hits: 6, changes: 6, cooldownMs: 10_000 })
+    expect(replay.fit(gate(1))).toMatchObject({ hits: 6, changes: 6, cooldownMs: 10_000 })
     replay.forget(13 * ROUND_MS)
-    expect(replay.fit(1)).toBeNull()
+    expect(replay.fit(gate(1))).toBeNull()
   })
 })

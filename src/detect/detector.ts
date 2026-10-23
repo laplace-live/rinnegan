@@ -1,6 +1,6 @@
 import type { Assessment, ChatMessage, ClusterSummary, Evidence, EvidenceKind, Pattern, Sample, Verdict } from '@/types'
 
-import { type ReplaySend, TrendTape, TriggerReplay } from '@/detect/blend'
+import { type ReplaySend, TrendTape, type TriggerGate, TriggerReplay } from '@/detect/blend'
 import { CrowdIndex } from '@/detect/crowd'
 import {
   canonicalForm,
@@ -159,16 +159,13 @@ const SESSION_GAPS = 400
 const MIN_FINGERPRINT_GAPS = 60
 /** Most recent repeated-line gaps the per-window tick fit looks at */
 const RECENT_TICK_GAPS = 150
-/** 自动融入 hits a ban needs, and the share of line changes they must cover: humans chasing trends by hand peak near 86% */
-const TRIGGER_HITS = 12
-const TRIGGER_SHARE = 0.9
-/** Of those, hits where the cooldown or the first-to-complete rule chose: with one trend at a time any quick viewer fits */
-const TRIGGER_RULED_OUT = 3
-const TRIGGER_CONTESTED = 3
+/**
+ * 自动融入 evidence that can ban: hits on 90% of line changes (humans chasing trends by hand peak near 86%), some of
+ * them where the cooldown or the first-to-complete rule made the choice, which nothing does with one trend at a time.
+ */
+const TRIGGER_GATE: TriggerGate = { hits: 12, share: 0.9, ruledOut: 3, contested: 3 }
 /** Partial 自动融入 evidence, too weak to ban alone */
-const TRIGGER_PARTIAL_HITS = 8
-const TRIGGER_PARTIAL_SHARE = 0.6
-const TRIGGER_PARTIAL_RULED_OUT = 3
+const TRIGGER_PARTIAL_GATE: TriggerGate = { hits: 8, share: 0.6, ruledOut: 3, contested: 0 }
 
 /** Noisy-OR: independent signals reinforce each other without exceeding 1. */
 function combine(weights: number[]): number {
@@ -742,15 +739,10 @@ export class Detector {
 
   /** Line changes that 自动融入's trigger predicts: the line it would have sent, right after it would have. */
   #trendTrigger(state: UserState, evaluations: ClusterEval[]): Candidate | null {
-    const fit = state.replay?.fit(TRIGGER_PARTIAL_HITS)
+    const ban = state.replay?.fit(TRIGGER_GATE)
+    const fit = ban ?? state.replay?.fit(TRIGGER_PARTIAL_GATE)
     if (!fit) return null
-    const share = fit.hits / fit.changes
-    const strong =
-      fit.hits >= TRIGGER_HITS &&
-      share >= TRIGGER_SHARE &&
-      fit.ruledOut >= TRIGGER_RULED_OUT &&
-      fit.contested >= TRIGGER_CONTESTED
-    if (!strong && (share < TRIGGER_PARTIAL_SHARE || fit.ruledOut < TRIGGER_PARTIAL_RULED_OUT)) return null
+    const strong = Boolean(ban)
     const cooldown = fit.cooldownMs === null ? '自动冷却' : `冷却 ${seconds(fit.cooldownMs)}`
     const found = evidence(
       'trend-trigger',
