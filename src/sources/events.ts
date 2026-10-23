@@ -2,7 +2,7 @@ import type { LaplaceEvent, Message } from '@laplace.live/event-types'
 
 import type { ChatMessage, SpendEvent } from '@/types'
 
-import { isRecord, toNumber } from '@/util/guards'
+import { isRecord, readPath, toNumber } from '@/util/guards'
 
 /** Why a `message` event was left out of detection. */
 export type SkipReason = 'anonymous' | 'auto-danmaku' | 'mirror' | 'empty' | 'mock'
@@ -33,6 +33,7 @@ export function toChatMessage(event: Message, options: { includeMirror?: boolean
     guardType: num(event.guardType),
     isEmote: isRecord(emote) && typeof emote.emoticon_unique === 'string' && emote.emoticon_unique.length > 0,
     medalLevel: num(event.medal?.level),
+    isReply: num(readPath(event.reply, 'uid')) > 0,
   }
 }
 

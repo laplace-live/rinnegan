@@ -4,19 +4,24 @@ import type { Assessment, ChatMessage } from '@/types'
 
 import { Detector } from '@/detect/detector'
 import {
+  type AutoBlendOptions,
   INVISIBLE_PRESETS,
   mergeStreams,
   type Persona,
   seededRandom,
+  simulateAutoBlend,
   simulateChatterboxLoop,
   simulateCheckIn,
   simulateCopyNinja,
+  simulateCrowd,
   simulateFixedTimer,
   simulateHumanChant,
   simulateHumanChat,
   simulatePlusOne,
   simulateRepeatBurst,
   simulateStickerSweep,
+  simulateTrendChaser,
+  TREND_CHASERS,
 } from '@/testing/simulate'
 
 const T0 = Date.parse('2026-10-20T12:00:00Z')
@@ -41,6 +46,17 @@ function judge(messages: ChatMessage[], uid: number): { peak: Assessment | null;
   }
   return { peak, spamAfter }
 }
+
+/** A busy room, ~290 danmaku/min: 80 viewers chanting whichever lines are in fashion, which moves every 20 s. */
+const BUSY_ROOM = {
+  uidBase: 1000,
+  size: 80,
+  lines: '？ 哈哈哈 爆了 好听 来了 晚上好 草 awsl 666 好耶 可爱 晚安 绷不住了 确实 下次一定 牛啊'.split(' '),
+  startAt: T0,
+  durationMs: 25 * MINUTE,
+  phaseMs: 20_000,
+}
+const CROWD = simulateCrowd(BUSY_ROOM)
 
 describe('chatterbox 独轮车 is caught', () => {
   test.each([...INVISIBLE_PRESETS])('1 s loop with 随机字符 %p', char => {
@@ -185,6 +201,54 @@ describe('chatterbox 独轮车 is caught', () => {
   })
 })
 
+describe('chatterbox 自动融入 is caught', () => {
+  // Simulated bots watch the crowd, not each other, so each one gets the room to itself.
+  test.each<[string, Omit<AutoBlendOptions, 'persona'>]>([
+    ['stock defaults', {}],
+    ['auto cooldown', { cooldownAuto: true }],
+    ['avoid-repeat', { avoidRepeat: true }],
+    ['随机字符 U+00AD', { randomChar: '\u00AD' }],
+    ['30 s cooldown', { cooldownMs: 30_000 }],
+  ])('%s', (_name, options) => {
+    const bot = simulateAutoBlend(CROWD, { persona: persona(400), ...options })
+    const { peak, spamAfter } = judge(mergeStreams(CROWD, bot), 400)
+    expect(peak?.verdict).toBe('spam')
+    expect(peak?.pattern).toBe('blend')
+    expect(peak?.evidence.find(item => item.kind === 'trend-trigger')?.weight).toBe(0.9)
+    expect(spamAfter).toBeLessThanOrEqual(30)
+  })
+
+  test('stays blend when the trends it copies also cycle like a template', () => {
+    // 150 viewers turn the fashion over so steadily that the bot's sends fit a template timer too.
+    const crowd = simulateCrowd({ ...BUSY_ROOM, size: 150, random: seededRandom(3) })
+    const { peak } = judge(mergeStreams(crowd, simulateAutoBlend(crowd, { persona: persona(400) })), 400)
+    expect(peak?.evidence.map(item => item.kind)).toContain('template-cycle')
+    expect(peak?.pattern).toBe('blend')
+  })
+
+  test('29% random drop still shows trigger evidence', () => {
+    // A dropped trigger neither sends nor starts a cooldown, which the replay doesn't model, so it can stay partial.
+    const bot = simulateAutoBlend(CROWD, { persona: persona(401), dropPercent: 29 })
+    const { peak } = judge(mergeStreams(CROWD, bot), 401)
+    expect(peak?.verdict).not.toBe('none')
+    expect(peak?.pattern).toBe('blend')
+    expect(peak?.evidence.find(item => item.kind === 'trend-trigger')?.weight).toBeGreaterThanOrEqual(0.6)
+  })
+
+  test('volume evidence counts one line, not the replay hits', () => {
+    // The drop bot spreads its sends over a dozen lines; none repeats 15 times, however many changes the replay predicts.
+    const bot = simulateAutoBlend(CROWD, { persona: persona(401), dropPercent: 29 })
+    const detector = new Detector()
+    const volumes: string[] = []
+    for (const message of mergeStreams(CROWD, bot)) {
+      const { assessment } = detector.ingest(message)
+      if (message.uid !== 401) continue
+      for (const item of assessment.evidence) if (item.kind === 'volume') volumes.push(item.detail)
+    }
+    expect(volumes).toEqual([])
+  })
+})
+
 describe('humans are never judged spam', () => {
   const SEEDS = 40
 
@@ -232,6 +296,30 @@ describe('humans are never judged spam', () => {
   test('fan-medal check-in bot and sticker panel sweeps', () => {
     expect(judge(simulateCheckIn(persona(204), T0), 204).peak?.verdict).toBe('none')
     expect(judge(simulateStickerSweep(persona(205), T0), 205).peak?.verdict).not.toBe('spam')
+  })
+
+  test('a busy room chanting trends', () => {
+    const detector = new Detector()
+    for (const message of CROWD) detector.ingest(message)
+    const spam = detector.summaries().filter(summary => summary.peak.verdict === 'spam')
+    expect(spam.map(summary => summary.uid)).toEqual([])
+  })
+
+  // Each run replays the whole crowd, so fewer seeds than above.
+  test.each(['fast', 'rested'] as const)('joining trends by hand, %s', name => {
+    for (let seed = 1; seed <= 5; seed++) {
+      const human = simulateTrendChaser(CROWD, {
+        persona: persona(206),
+        ...TREND_CHASERS[name],
+        random: seededRandom(seed),
+      })
+      expect(judge(mergeStreams(CROWD, human), 206).peak?.verdict).not.toBe('spam')
+    }
+  })
+
+  test('+1-ing a busy room every ~6 s', () => {
+    const copier = simulatePlusOne(CROWD, persona(207), 25)
+    expect(judge(mergeStreams(CROWD, copier), 207).peak?.verdict).not.toBe('spam')
   })
 })
 

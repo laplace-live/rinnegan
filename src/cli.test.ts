@@ -9,11 +9,18 @@ import { simulateChatterboxLoop } from '@/testing/simulate'
 const dir = mkdtempSync(join(tmpdir(), 'rinnegan-cli-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
+/** The test's env without the settings `configFromEnv` reads. */
+const hostEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => !/^(RINNEGAN|LOGIN_SYNC)_/.test(name))
+)
+
 async function cli(...args: string[]): Promise<{ code: number; out: string; err: string }> {
-  const proc = Bun.spawn(['bun', 'src/cli.ts', ...args], {
+  // Run from the temp dir so a local rinnegan.config.json can't filter rooms or change thresholds either.
+  const proc = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), ...args], {
+    cwd: dir,
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...process.env, NO_COLOR: '1', LOGIN_SYNC_TOKEN: '', RINNEGAN_LOG_DIR: join(dir, 'logs') },
+    env: { ...hostEnv, NO_COLOR: '1', LOGIN_SYNC_TOKEN: '', RINNEGAN_LOG_DIR: join(dir, 'logs') },
   })
   const [out, err, code] = await Promise.all([
     new Response(proc.stdout).text(),
