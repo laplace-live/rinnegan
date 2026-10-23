@@ -101,6 +101,9 @@ export interface Persona {
   guardType?: number
 }
 
+/** Chatterbox's send queue spaces sends at least this far apart, ms */
+const SEND_QUEUE_GAP_MS = 1010
+
 let nextId = 1
 
 function makeMessage(persona: Persona, text: string, timestamp: number, isEmote = false): ChatMessage {
@@ -115,6 +118,7 @@ function makeMessage(persona: Persona, text: string, timestamp: number, isEmote 
     guardType: persona.guardType ?? 0,
     isEmote,
     medalLevel: 0,
+    isReply: false,
   }
 }
 
@@ -178,7 +182,7 @@ export function simulateChatterboxLoop(options: LoopOptions): ChatMessage[] {
       const line = options.rewrite ? options.rewrite(rawLine, round, random) : rawLine
       for (const chunk of processMessages(line, maxLength, random, options.randomChar)) {
         if (now >= end) return out
-        if (lastCompleted > 0 && now - lastCompleted < 1010) now = lastCompleted + 1010
+        if (lastCompleted > 0 && now - lastCompleted < SEND_QUEUE_GAP_MS) now = lastCompleted + SEND_QUEUE_GAP_MS
         const accepted = now + baseLatency + (random() - 0.5) * 80
         if (filter.accept(options.persona.uid, chunk, accepted)) out.push(makeMessage(options.persona, chunk, accepted))
         lastCompleted = accepted
@@ -237,7 +241,7 @@ export function simulateCopyNinja(master: ChatMessage[], persona: Persona, rando
   const out: ChatMessage[] = []
   let lastPlanned = 0
   for (const message of master) {
-    lastPlanned = Math.max(message.timestamp + 2000 + rand() * 3000, lastPlanned + 1010)
+    lastPlanned = Math.max(message.timestamp + 2000 + rand() * 3000, lastPlanned + SEND_QUEUE_GAP_MS)
     if (filter.accept(persona.uid, message.text, lastPlanned)) out.push(makeMessage(persona, message.text, lastPlanned))
   }
   return out
@@ -331,6 +335,181 @@ export function simulateStickerSweep(persona: Persona, startAt: number, random?:
     }
   }
   return out
+}
+
+/** Chatterbox 自动融入 settings (apps/chatterbox/src/lib/store.ts); omitted ones keep the shipped defaults. */
+export interface AutoBlendOptions {
+  persona: Persona
+  /** `autoBlendUniqueUsers` */
+  uniqueUsers?: number
+  /** `autoBlendMinOccurrences` */
+  minOccurrences?: number
+  /** `autoBlendWindowSec`, ms */
+  windowMs?: number
+  /** `autoBlendCooldownSec`, ms */
+  cooldownMs?: number
+  /** `autoBlendCooldownAuto`: 300 / CPM seconds, clamped to 2–60 */
+  cooldownAuto?: boolean
+  /** `autoBlendAvoidRepeat`, against the last 3 triggers */
+  avoidRepeat?: boolean
+  /** `autoBlendRandomDropPercent` with `autoBlendRandomDrop` on */
+  dropPercent?: number
+  /** Insert this char each send (随机字符) */
+  randomChar?: string
+  maxLength?: number
+  startAt?: number
+  endAt?: number
+  /** Range the bot's trigger-to-accepted-send latency is drawn from; each send adds ±`jitterMs` */
+  latencyMs?: [number, number]
+  jitterMs?: number
+  random?: () => number
+}
+
+/** Port of chatterbox 自动融入 (auto-blend.ts `recordDanmaku` / `triggerSend`) watching `room`; its accepted sends. */
+export function simulateAutoBlend(room: readonly ChatMessage[], options: AutoBlendOptions): ChatMessage[] {
+  const { persona } = options
+  const random = options.random ?? seededRandom(persona.uid)
+  const filter = new BilibiliFilter()
+  const users = options.uniqueUsers ?? 3
+  const sends = options.minOccurrences ?? 3
+  const windowMs = options.windowMs ?? 15_000
+  const maxLength = options.maxLength ?? 38
+  const [latencyMin, latencyMax] = options.latencyMs ?? [300, 900]
+  const baseLatency = latencyMin + random() * (latencyMax - latencyMin)
+  const jitter = options.jitterMs ?? 120
+  const counters = new Map<string, { uids: Set<number>; total: number; lastSeenAt: number }>()
+  const timestamps: number[] = []
+  let recent: string[] = []
+  let cooldownUntil = 0
+  let lastSent = 0
+  const out: ChatMessage[] = []
+  for (const message of room) {
+    const now = message.timestamp
+    if (message.uid === persona.uid || (options.startAt !== undefined && now < options.startAt)) continue
+    if (options.endAt !== undefined && now > options.endAt) break
+    timestamps.push(now)
+    if (now < cooldownUntil) continue
+    const text = message.text.trim()
+    if (!text || message.isEmote || message.isReply) continue
+    if (options.avoidRepeat && recent.includes(text)) continue
+    for (const [line, counter] of counters) if (now - counter.lastSeenAt > windowMs) counters.delete(line)
+    let counter = counters.get(text)
+    if (!counter) {
+      counter = { uids: new Set(), total: 0, lastSeenAt: now }
+      counters.set(text, counter)
+    }
+    counter.total++
+    counter.lastSeenAt = now
+    counter.uids.add(message.uid)
+    if (counter.uids.size < users || counter.total < sends) continue
+    recent = [...recent, text].slice(-3)
+    if (options.dropPercent && random() * 100 < options.dropPercent) {
+      counters.delete(text)
+      continue
+    }
+    let cooldownMs = options.cooldownMs ?? 10_000
+    if (options.cooldownAuto) {
+      while (timestamps.length > 0 && (timestamps[0] as number) < now - 30_000) timestamps.shift()
+      const span = Math.max(2000, Math.min(now - (timestamps[0] as number), 30_000))
+      const cpm = Math.round((timestamps.length * 60_000) / span)
+      cooldownMs = (cpm <= 0 ? 60 : Math.min(60, Math.max(2, Math.round(300 / cpm)))) * 1000
+    }
+    cooldownUntil = now + cooldownMs
+    counters.clear()
+    let line = options.randomChar ? insertRandomChar(text, options.randomChar, random).text : text
+    line = trimText(line, maxLength)[0] ?? line
+    const at = Math.max(now + baseLatency + (random() - 0.5) * 2 * jitter, lastSent + SEND_QUEUE_GAP_MS)
+    if (!filter.accept(persona.uid, line, at)) continue
+    lastSent = at
+    out.push(makeMessage({ roomId: message.roomId, ...persona }, line, at))
+  }
+  return out
+}
+
+export interface TrendChaserOptions {
+  persona: Persona
+  /** Reaction delay range, ms (log-uniform) */
+  reactMs?: [number, number]
+  /** Rest after each send, ms (uniform) */
+  restMs?: [number, number]
+  /** Share of fresh trends joined */
+  chance?: number
+  startAt?: number
+  endAt?: number
+  random?: () => number
+}
+
+/** Viewers doing 自动融入 by hand; `rested` rests about as long as its stock 10 s cooldown. */
+export const TREND_CHASERS = {
+  fast: { reactMs: [600, 2500], restMs: [3000, 12_000], chance: 0.7 },
+  rested: { reactMs: [800, 3000], restMs: [9500, 11_500], chance: 0.9 },
+  quick: { reactMs: [500, 2000], restMs: [4000, 6000], chance: 1 },
+} satisfies Record<string, Omit<TrendChaserOptions, 'persona'>>
+
+/** A viewer doing 自动融入 by hand: joins a line once 3 people sent it, after a human delay, then rests. */
+export function simulateTrendChaser(room: readonly ChatMessage[], options: TrendChaserOptions): ChatMessage[] {
+  const { persona } = options
+  const random = options.random ?? seededRandom(persona.uid)
+  const [reactMin, reactMax] = options.reactMs ?? [800, 3000]
+  const [restMin, restMax] = options.restMs ?? [4000, 12_000]
+  const chance = options.chance ?? 0.8
+  const runs = new Map<string, { uids: Set<number>; lastAt: number; joined: boolean }>()
+  const out: ChatMessage[] = []
+  let busyUntil = 0
+  for (const message of room) {
+    if (options.startAt !== undefined && message.timestamp < options.startAt) continue
+    if (options.endAt !== undefined && message.timestamp > options.endAt) break
+    const text = message.text.trim()
+    if (!text || message.isEmote || message.uid === persona.uid) continue
+    let run = runs.get(text)
+    if (!run || message.timestamp - run.lastAt > 15_000) {
+      run = { uids: new Set(), lastAt: message.timestamp, joined: false }
+      runs.set(text, run)
+    }
+    run.lastAt = message.timestamp
+    run.uids.add(message.uid)
+    if (run.joined || run.uids.size < 3 || message.timestamp < busyUntil) continue
+    run.joined = true
+    if (random() > chance) continue
+    const react = Math.exp(Math.log(reactMin) + random() * (Math.log(reactMax) - Math.log(reactMin)))
+    const at = message.timestamp + react
+    out.push(makeMessage({ roomId: message.roomId, ...persona }, text, at))
+    busyUntil = at + restMin + random() * (restMax - restMin)
+  }
+  return out
+}
+
+/**
+ * A busy room chanting by hand: `size` viewers at human gaps, most sends picking one of the few `lines` in fashion
+ * (the fashion moves every `phaseMs`), the rest chatting from the whole list.
+ */
+export function simulateCrowd(options: {
+  uidBase: number
+  size: number
+  lines: string[]
+  startAt: number
+  durationMs: number
+  roomId?: number
+  phaseMs?: number
+  random?: () => number
+}): ChatMessage[] {
+  const random = options.random ?? seededRandom(options.uidBase)
+  const phaseMs = options.phaseMs ?? 40_000
+  const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)] as T
+  const end = options.startAt + options.durationMs
+  const phases: string[][] = []
+  for (let at = options.startAt; at < end; at += phaseMs) phases.push([pick(options.lines), pick(options.lines)])
+  const out: ChatMessage[] = []
+  for (let i = 0; i < options.size; i++) {
+    const persona = { uid: options.uidBase + i, uname: `crowd${i}`, roomId: options.roomId ?? 1 }
+    let at = options.startAt + random() * 20_000
+    while (at < end) {
+      const hot = phases[Math.floor((at - options.startAt) / phaseMs)] as string[]
+      out.push(makeMessage(persona, random() < 0.75 ? pick(hot) : pick(options.lines), at))
+      at += Math.max(3000, Math.exp(Math.log(14_000) + 0.6 * standardNormal(random)))
+    }
+  }
+  return mergeStreams(out)
 }
 
 /** Merge streams into one time-ordered feed. */

@@ -33,14 +33,26 @@ and the real archive this was calibrated on has hundreds of them. A ban needs **
 | 机器速度     | The same line kept up at ≤ 2.5 s gaps for 20+ sends, which Bilibili's filter only allows when every send is altered.                                                                                                            |
 | 模板轮播     | Several lines cycled on one timer (multi-line templates, chunked long text).                                                                                                                                                    |
 | 插入字符     | A visible custom 随机字符 inserted at varying positions.                                                                                                                                                                        |
+| 跟风触发     | Chatterbox 自动融入: every change of line is the first line to reach 3 users × 3 sends after its cooldown (below).                                                                                                              |
+
+自动融入 copies what the room is already saying, at moments the room sets, so without 随机字符 it shows none of the
+evidence above. Each send still follows from the room alone: a line fires once 3 users have sent it 3 times (a line idle
+for 15 s starts over), then the bot ignores the room for its cooldown and counts from zero. Rinnegan replays that rule
+for every sender under 14 fixed cooldowns (2–60 s) and the CPM-derived auto cooldown, each with and without
+avoid-repeat, and follows resends Bilibili drops; sending the predicted line ≤ 2.5 s after the message that completed it
+is a hit. A ban needs 12 hits covering ≥ 90% of the user's changes to a line others were sending inside the window
+(people chasing trends by hand peak around 86%), and the rule must have chosen: in 3 of them the cooldown skipped a line
+the user didn't join, and in 3 another line also completed before the send. With one trend at a time every setting
+predicts the next one, and a viewer joining each trend by hand fits as well as the bot does. 60% with 8 hits, 3 of them
+skips, is partial evidence.
 
 Messages are canonicalized first (NFKC, case, punctuation, invisible chars, repeated phrases with cut-off tails,
 character runs) and grouped per user with a small edit-distance allowance, so all variants of one line count together.
 Lines half the room is spamming lower the weight of pure repetition but never excuse automation. Scores run 0–100;
 `spam` needs ≥ 90 **and** automation evidence, `suspect` starts at 60.
 
-Patterns: `loop` 循环独轮车, `burst` 爆发刷屏, `template` 模板轮播, `blend` 跟风机器人 (auto-blend bots repeating trends with
-jitter), `flood` 高频重复 (repetition without automation evidence — reported, never banned).
+Patterns: `loop` 循环独轮车, `burst` 爆发刷屏, `template` 模板轮播, `blend` 跟风机器人 (Chatterbox 自动融入 and other trend
+followers, jittered or trigger-timed), `flood` 高频重复 (repetition without automation evidence — reported, never banned).
 
 ### Accuracy
 
@@ -49,10 +61,16 @@ Calibrated on a real 89,970-message archive (5,725 users) and checked against si
   random intervals with 随机字符, templates, split long lines, visible custom chars, paraphrase cycling, keyword
   replacement, Copy Ninja mirrors and repeat-count burst tools. A random-interval loop **without** 随机字符 stays a
   suspect: clamped Gaussian jitter is too close to human pacing to ban on alone.
+- 自动融入 injected into the real archive's busy hours is caught at every setting tried: stock, auto cooldown with and
+  without avoid-repeat, 4 s with 29% random drop, 30 s, a 10-char length limit, 2 s resends of cut long lines and slow
+  jittered latency. Where trends rarely overlap it stays a suspect, and random drop costs a hit per dropped trigger.
+  People chasing the same trends by hand (0.5–6 s reactions), also in rooms with one chant at a time, stay below
+  `spam`; the most bot-like reach `suspect`.
 - 0 of 1,000 simulated long human sessions and 0 of 300 mixed-room simulations reached `spam`; +1 copiers, check-in
   bots and sticker-panel sweeps stay below it.
-- On the real archive, 36 users are judged `spam`, every one reviewed by hand; known traps (a fan who pasted a bot's
-  line, heavy +1 users, the streamer, check-in bots) are not. Detection runs at ~100k messages/s.
+- On the real archive, 41 users are judged `spam`, every one reviewed by hand (5 of them trend-following bots only the
+  自动融入 replay catches); known traps (a fan who pasted a bot's line, heavy +1 users, the streamer, check-in bots) are
+  not. Detection runs at ~80k messages/s.
 
 Timing thresholds come from bootstrapping real human send gaps (200k resamples), set above the worst chance fit.
 
@@ -82,8 +100,8 @@ A second opinion before banning, mirroring LAPLACE Chatterbox's integrations:
   model `typesafe/jev-1.13`) or Typesafe directly (`--ai-protocol typesafe`, `jev-latest`).
 - `--ai-provider llm`: any OpenAI-compatible chat model (OpenRouter by default), returning JSON.
 - `--ai confirm`: every ban needs the reviewer's agreement (`--ai-threshold`, default 0.8).
-- `--ai assist`: also reviews strong suspects (score ≥ 75 with partial automation evidence, e.g. a jittered timer or
-  LLM-polished loop) and bans when it agrees. It never bans on repetition alone.
+- `--ai assist`: also reviews strong suspects (score ≥ 75 with partial automation evidence, e.g. a jittered timer,
+  an LLM-polished loop or a partial 自动融入 replay) and bans when it agrees. It never bans on repetition alone.
 
 Set the key with `RINNEGAN_AI_API_KEY`. Reviews are capped per hour; the reviewer sees the user's recent messages and
 the detector's features, never their uid.

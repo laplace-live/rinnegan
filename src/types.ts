@@ -17,6 +17,8 @@ export interface ChatMessage {
   isEmote: boolean
   /** Fan medal level, 0 when none is worn */
   medalLevel: number
+  /** @-reply to another viewer */
+  isReply: boolean
 }
 
 /** A paid event (gift, SuperChat, guard) used by conditional unban rules. */
@@ -40,7 +42,7 @@ export type Verdict = 'none' | 'suspect' | 'spam'
  * - `loop`: one line resent on a timer (独轮车)
  * - `burst`: same content fired at machine speed with dedup-bypass variants
  * - `template`: several lines cycled in order
- * - `blend`: trend-following bot that repeats whatever the room is spamming
+ * - `blend`: trend-following bot (chatterbox 自动融入) that sends whatever the room is spamming
  * - `flood`: heavy repetition without automation evidence
  */
 export type Pattern = 'loop' | 'burst' | 'template' | 'blend' | 'flood'
@@ -53,6 +55,7 @@ export type EvidenceKind =
   | 'send-tick'
   | 'machine-speed'
   | 'template-cycle'
+  | 'trend-trigger'
   | 'volume'
 
 export interface Evidence {
@@ -98,8 +101,10 @@ export interface Assessment {
   score: number
   verdict: Verdict
   pattern: Pattern
-  /** Excess repeats (messages beyond the first of each repeated line) inside the window */
+  /** Excess repeats (messages beyond the first of each repeated line) inside the window, or {@link triggerHits} */
   repeats: number
+  /** `repeats` counts 自动融入 trigger hits, not repeated messages: the replay set the score */
+  triggerHits?: boolean
   /** User's messages inside the window */
   windowMessages: number
   /** 0..1 confidence behind the score, repetition volume included */

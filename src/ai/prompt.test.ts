@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 
-import { buildReviewMessages, buildReviewState, REVIEW_REPLY_SCHEMA, REVIEW_SYSTEM_PROMPT } from '@/ai/prompt'
+import {
+  buildReviewMessages,
+  buildReviewState,
+  REVIEW_GUIDE,
+  REVIEW_REPLY_SCHEMA,
+  REVIEW_SYSTEM_PROMPT,
+} from '@/ai/prompt'
 import { SAMPLE_UID, sampleInput } from '@/ai/test-helpers'
 
 describe('buildReviewState', () => {
@@ -98,5 +104,13 @@ describe('buildReviewMessages', () => {
       expect(REVIEW_SYSTEM_PROMPT).toContain(phrase)
     }
     expect(REVIEW_REPLY_SCHEMA).toMatchObject({ required: ['probability', 'reason'], additionalProperties: false })
+  })
+})
+
+describe('REVIEW_GUIDE', () => {
+  test('explains the 自动融入 trigger and names its evidence kind', () => {
+    for (const phrase of ['自动融入', '3 人 3 次', '冷却', '即使不带不可见字符', 'trend-trigger']) {
+      expect(REVIEW_GUIDE).toContain(phrase)
+    }
   })
 })
