@@ -1,6 +1,6 @@
 import type { Assessment, ChatMessage, ClusterSummary, Evidence, EvidenceKind, Pattern, Sample, Verdict } from '@/types'
 
-import { followsCrowd, type ReplaySend, TrendTape, TriggerReplay } from '@/detect/blend'
+import { type ReplaySend, TrendTape, TriggerReplay } from '@/detect/blend'
 import { CrowdIndex } from '@/detect/crowd'
 import {
   canonicalForm,
@@ -162,9 +162,13 @@ const RECENT_TICK_GAPS = 150
 /** 自动融入 hits a ban needs, and the share of line changes they must cover: humans chasing trends by hand peak near 86% */
 const TRIGGER_HITS = 12
 const TRIGGER_SHARE = 0.9
+/** Of those, hits where the cooldown or the first-to-complete rule chose: with one trend at a time any quick viewer fits */
+const TRIGGER_RULED_OUT = 3
+const TRIGGER_CONTESTED = 3
 /** Partial 自动融入 evidence, too weak to ban alone */
 const TRIGGER_PARTIAL_HITS = 8
 const TRIGGER_PARTIAL_SHARE = 0.6
+const TRIGGER_PARTIAL_RULED_OUT = 3
 
 /** Noisy-OR: independent signals reinforce each other without exceeding 1. */
 function combine(weights: number[]): number {
@@ -314,14 +318,9 @@ export class Detector {
     const countable = text.length > 0 && !message.isEmote && !message.isReply
     tape.add({ at: rec.at, uid: state.uid, text, key: rec.key, countable })
     if (!countable) return
-    const send: ReplaySend = {
-      at: rec.at,
-      text,
-      key: rec.key,
-      others: this.#crowd.others(state.roomId, rec.key, state.uid),
-    }
+    const send: ReplaySend = { at: rec.at, text, key: rec.key }
     if (state.replay) state.replay.observe(tape, send)
-    else if (followsCrowd(send)) state.replay = new TriggerReplay(state.uid, send)
+    else if (tape.followsCrowd(send, state.uid)) state.replay = new TriggerReplay(state.uid, send)
   }
 
   #recordSessionGap(state: UserState, gap: number): void {
@@ -618,15 +617,20 @@ export class Detector {
     let members = new Set(best ? [best] : [])
     let pattern: Pattern | undefined
     let decided: Pattern | undefined
+    let triggerHits = false
     const lead: Evidence[] = []
     // One tool tick drives every line a looper sends, so the lattice is fitted on all their repeated lines at once.
     // Asked even without a repeated line: the session fingerprint refits on these calls.
     const tick = this.#sendTick(evaluations) ?? this.#fingerprintTick(state, evaluations)
     // A blend bot may never repeat a line inside the window, so its replay competes even without a repeated line.
-    for (const option of [this.#templateCycle(state, evaluations), tick, this.#trendTrigger(state, evaluations)]) {
+    const trigger = this.#trendTrigger(state, evaluations)
+    for (const option of [this.#templateCycle(state, evaluations), tick, trigger]) {
       if (!option) continue
       const wins = this.#score(option.repeats, option.automation) > this.#score(repeats, automation)
-      if (wins) ({ repeats, automation, members, pattern } = option)
+      if (wins) {
+        ;({ repeats, automation, members, pattern } = option)
+        triggerHits = option === trigger
+      }
       if (wins || option.supporting) lead.unshift(option.evidence)
       if (option.decisive) decided = option.pattern
     }
@@ -662,6 +666,7 @@ export class Detector {
       verdict,
       pattern: decided ?? pattern ?? (best ? this.#classify(state, best, found) : 'loop'),
       repeats,
+      ...(triggerHits ? { triggerHits } : {}),
       windowMessages: state.records.length,
       automation: Math.round(automation * 1000) / 1000,
       proof: Math.round(proof * 1000) / 1000,
@@ -740,13 +745,17 @@ export class Detector {
     const fit = state.replay?.fit(TRIGGER_PARTIAL_HITS)
     if (!fit) return null
     const share = fit.hits / fit.changes
-    const strong = fit.hits >= TRIGGER_HITS && share >= TRIGGER_SHARE
-    if (!strong && share < TRIGGER_PARTIAL_SHARE) return null
+    const strong =
+      fit.hits >= TRIGGER_HITS &&
+      share >= TRIGGER_SHARE &&
+      fit.ruledOut >= TRIGGER_RULED_OUT &&
+      fit.contested >= TRIGGER_CONTESTED
+    if (!strong && (share < TRIGGER_PARTIAL_SHARE || fit.ruledOut < TRIGGER_PARTIAL_RULED_OUT)) return null
     const cooldown = fit.cooldownMs === null ? '自动冷却' : `冷却 ${seconds(fit.cooldownMs)}`
     const found = evidence(
       'trend-trigger',
       strong ? 0.9 : 0.6,
-      `${fit.changes} 次换句中 ${fit.hits} 次正是${cooldown}后最先凑满 3 人 3 次的弹幕${fit.avoid ? '（避免重复）' : ''}，中位延迟 ${seconds(fit.lagMs)}`
+      `${fit.changes} 次换句中 ${fit.hits} 次正是${cooldown}后最先凑满 3 人 3 次的弹幕${fit.avoid ? '（避免重复）' : ''}（${fit.ruledOut} 次冷却中跳过别的热门，${fit.contested} 次同时另有热门），中位延迟 ${seconds(fit.lagMs)}`
     )
     const members = new Set(evaluations.filter(evaluation => fit.keys.has(evaluation.summary.key)))
     // Sends timed by the room's trends make a blend bot, whatever timer or template its lines also fit.

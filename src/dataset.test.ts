@@ -53,7 +53,6 @@ const CONFIRMED_SPAM: Record<string, string> = {
   ab50bd5420b3: '自动融入 on a ~5 s cooldown, copies the long 老公天下第一 chant',
   '02eb8896c257': '自动融入 on a ~5 s cooldown',
   '17da0945ce9c': 'chats by hand with 自动融入 running alongside; its copies land 50–90 ms after the trigger',
-  '8d5c8f6d3bd4': 'partial trigger evidence plus a steady random-interval cadence',
 }
 
 /** Must never reach `spam`: heavy-but-human behaviour and benign automation. */

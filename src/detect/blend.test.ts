@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { followsCrowd, type ReplaySend, type TapeEntry, TrendTape, TriggerReplay } from '@/detect/blend'
-import { CrowdIndex } from '@/detect/crowd'
-import { DEFAULT_DETECTOR_OPTIONS } from '@/detect/detector'
+import { type ReplaySend, type TapeEntry, TrendTape, TriggerReplay } from '@/detect/blend'
 import { canonicalize } from '@/detect/normalize'
 
 const BOT = 1
@@ -52,16 +50,14 @@ function tapeOf(lines: Line[]): TrendTape {
 /** Replays `uid` as the detector does: each message goes on the tape, then the user's own sends are judged. */
 function play(room: Line[], uid = BOT): TriggerReplay {
   const tape = new TrendTape()
-  const crowd = new CrowdIndex(DEFAULT_DETECTOR_OPTIONS.windowMs)
   let replay: TriggerReplay | null = null
   for (const line of byTime(room)) {
     const added = entry(line)
     tape.add(added)
-    crowd.add(1, added.key, line.uid, line.at)
     if (line.uid !== uid) continue
-    const send: ReplaySend = { at: line.at, text: line.text, key: added.key, others: crowd.others(1, added.key, uid) }
+    const send: ReplaySend = { at: line.at, text: line.text, key: added.key }
     if (replay) replay.observe(tape, send)
-    else if (followsCrowd(send)) replay = new TriggerReplay(uid, send)
+    else if (tape.followsCrowd(send, uid)) replay = new TriggerReplay(uid, send)
   }
   if (!replay) throw new Error('no send followed the crowd')
   return replay
@@ -156,15 +152,27 @@ describe('TrendTape.cpm', () => {
   })
 })
 
-describe('followsCrowd', () => {
-  const send = (key: string, others: number): ReplaySend => ({ at: 0, text: key, key, others })
+describe('TrendTape.followsCrowd', () => {
+  const long = LONG_LINES[0] as string
+  const follows = (lines: Line[], text: string, at = 2000) =>
+    tapeOf(lines).followsCrowd({ at, text, key: canonicalize(text) }, BOT)
 
-  test('needs 2 other senders unless the line is long enough to have been cut', () => {
-    const long = '今天的直播真的太好看了主播辛苦了'
-    expect(followsCrowd(send('爆了', 2))).toBe(true)
-    expect(followsCrowd(send('爆了', 1))).toBe(false)
-    expect(followsCrowd(send(long, 0))).toBe(true)
-    expect(followsCrowd(send(long.slice(0, 15), 1))).toBe(false)
+  test('needs 2 other senders of the same line', () => {
+    expect(follows(chant('爆了', 0, [11, 12]), '爆了')).toBe(true)
+    expect(follows(chant('爆了', 0, [11]), '爆了')).toBe(false)
+    expect(follows(chant('爆了', 0, [11, BOT]), '爆了')).toBe(false)
+  })
+
+  test('accepts a send cut from a line others are sending, not an unrelated long line', () => {
+    expect(follows(chant(long, 0, [11, 12]), long.slice(0, 10))).toBe(true)
+    expect(follows(chant(long, 0, [11, 12]), long.slice(0, 7))).toBe(false)
+    expect(follows(chant(long, 0, [11]), long.slice(0, 10))).toBe(false)
+    expect(follows(chant('爆了', 0, [11, 12]), long)).toBe(false)
+  })
+
+  test("ignores stickers and @-replies, which 自动融入 doesn't count", () => {
+    const replies = chant('爆了', 0, [11, 12]).map(line => ({ ...line, countable: false }))
+    expect(follows(replies, '爆了')).toBe(false)
   })
 })
 
@@ -224,6 +232,20 @@ describe('TriggerReplay', () => {
     expect(play(room).fit(1)).toMatchObject({ hits: 12, changes: 12, cooldownMs: 7000 })
   })
 
+  test('a cut resend Bilibili dropped is still followed', () => {
+    // As above, but the long lines are cut to 20 chars: the dropped resend repeats the cut send, not the full line.
+    const room = Array.from({ length: 13 }, (_, r) => {
+      const line = `${LONG_LINES[r % LONG_LINES.length]}${r}`
+      return [
+        ...chant(line, r * 5000),
+        { at: r * 5000 + 1000, uid: BOT, text: line.slice(0, 20) },
+        ...chant(line, r * 5000 + 2500, CROWD, 100),
+        ...chant(`诱饵${r}`, r * 5000 + 4400, DECOYS, 100),
+      ]
+    }).flat()
+    expect(play(room).fit(1)).toMatchObject({ hits: 12, changes: 12, cooldownMs: 2000 })
+  })
+
   test('a send cut at the length limit still matches its line', () => {
     const lines = cycle(13, LONG_LINES)
     const cut = tenSecondBot(lines).map(send => ({ ...send, text: send.text.slice(0, 20) }))
@@ -238,6 +260,39 @@ describe('TriggerReplay', () => {
     const fit = play(room).fit(1)
     expect(fit).toMatchObject({ hits: 12, changes: 12, cooldownMs: 10_000 })
     expect(play([...room, ...manual]).fit(1)).toEqual(fit)
+  })
+
+  test('a send inside the cooldown leaves it alone', () => {
+    const lines = cycle(13)
+    // Typing the previous round's line mid-cooldown: had that restarted the cooldown, the next trend would fall inside.
+    const typed = lines.map((_, r) => ({ at: r * ROUND_MS + 5000, uid: BOT, text: lines[(r + 2) % 3] as string }))
+    const fit = play([...trendRoom(lines), ...tenSecondBot(lines), ...typed]).fit(1)
+    expect(fit).toMatchObject({ hits: 12, cooldownMs: 10_000 })
+  })
+
+  test('counts hits where the cooldown or the first-to-complete rule made the choice', () => {
+    const lines = cycle(13)
+    // The decoy completes inside each cooldown; a rival completes right after each line, before the bot sends it.
+    const rivals = lines.flatMap((_, r) => chant(`对手${r}`, r * ROUND_MS + 500, DECOYS, 100))
+    const fit = play([...trendRoom(lines), ...rivals, ...tenSecondBot(lines)]).fit(1)
+    expect(fit).toMatchObject({ hits: 12, ruledOut: 12, contested: 12, cooldownMs: 10_000 })
+  })
+
+  test("a line the user joined mid-cooldown wasn't ruled out", () => {
+    const lines = cycle(13)
+    // An early rival trends inside each cooldown and the bot's user copies it 3 s later, by hand.
+    const rivals = lines.flatMap((_, r) => chant(`对手${r}`, r * ROUND_MS + 1600, DECOYS))
+    const copies = lines.map((_, r) => ({ at: r * ROUND_MS + 5000, uid: BOT, text: `对手${r}` }))
+    const fit = play([...trendRoom(lines), ...rivals, ...copies, ...tenSecondBot(lines)]).fit(1)
+    expect(fit).toMatchObject({ hits: 12, ruledOut: 0, cooldownMs: 10_000 })
+  })
+
+  test('one trend at a time proves nothing', () => {
+    // Every setting predicts the next chant, so a viewer joining each one quickly fits perfectly but is never tested.
+    const lines = Array.from({ length: 13 }, (_, r) => `口号${r}`)
+    const room = lines.flatMap((text, r) => chant(text, r * 30_000))
+    const human = lines.map((text, r) => ({ at: r * 30_000 + 400 + 700 + (r % 3) * 400, uid: HUMAN, text }))
+    expect(play([...room, ...human], HUMAN).fit(1)).toMatchObject({ hits: 12, ruledOut: 0, contested: 0 })
   })
 
   test('sending the same line again is not a change', () => {

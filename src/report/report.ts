@@ -26,8 +26,10 @@ export interface ReportUser {
   verdict: Verdict
   score: number
   pattern: Pattern
-  /** Excess repeats in the window at the peak */
+  /** Excess repeats in the window at the peak, or 自动融入 trigger hits when {@link triggerHits} */
   repeats: number
+  /** `repeats` counts trigger hits: the 自动融入 replay set the score */
+  triggerHits: boolean
   automation: number
   /** Total messages this user sent in the archive */
   messages: number
@@ -67,6 +69,7 @@ export function buildReport(options: {
       score: summary.peak.score,
       pattern: summary.peak.pattern,
       repeats: summary.peak.repeats,
+      triggerHits: summary.peak.triggerHits ?? false,
       automation: summary.peak.automation,
       messages: summary.messages,
       firstAt: summary.firstAt,
@@ -137,7 +140,7 @@ export function renderConsole(
         `#${user.rank} ${verdictBadge(user.verdict, user.score)}  ${style.bold(user.uname || '(无名)')} ${style.gray(`uid ${user.uid} · 房间 ${user.roomId}`)}${user.exempt ? style.cyan(` · 豁免：${user.exempt}`) : ''}`
       )
       lines.push(
-        `   ${PATTERN_LABELS[user.pattern]} · 窗口内重复 ${user.repeats} 次 · 自动化 ${user.automation.toFixed(2)} · 共 ${count(user.messages)} 条 · ${user.episodes.length} 段 · 峰值 ${dateTime(user.peakAt)}`
+        `   ${PATTERN_LABELS[user.pattern]} · ${user.triggerHits ? '跟风命中' : '窗口内重复'} ${user.repeats} 次 · 自动化 ${user.automation.toFixed(2)} · 共 ${count(user.messages)} 条 · ${user.episodes.length} 段 · 峰值 ${dateTime(user.peakAt)}`
       )
       for (const item of user.evidence) {
         lines.push(
@@ -182,7 +185,7 @@ export function renderMarkdown(report: OfflineReport): string {
   for (const user of report.users) {
     const top = user.clusters[0]
     out.push(
-      `| ${user.rank} | ${VERDICT_LABELS[user.verdict]}${user.exempt ? '（豁免）' : ''} | ${user.score} | ${cell(user.uname)} | ${user.uid} | ${PATTERN_LABELS[user.pattern]} | ${user.repeats} | ${user.evidence.map(item => EVIDENCE_LABELS[item.kind]).join('、')} | ${top ? cell(`「${escapeInvisible(clip(top.key, 30))}」×${top.count}`) : ''} |`
+      `| ${user.rank} | ${VERDICT_LABELS[user.verdict]}${user.exempt ? '（豁免）' : ''} | ${user.score} | ${cell(user.uname)} | ${user.uid} | ${PATTERN_LABELS[user.pattern]} | ${user.repeats}${user.triggerHits ? '（跟风命中）' : ''} | ${user.evidence.map(item => EVIDENCE_LABELS[item.kind]).join('、')} | ${top ? cell(`「${escapeInvisible(clip(top.key, 30))}」×${top.count}`) : ''} |`
     )
   }
   for (const user of report.users) {

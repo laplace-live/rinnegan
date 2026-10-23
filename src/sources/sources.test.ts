@@ -37,6 +37,12 @@ describe('toChatMessage', () => {
     expect(toChatMessage(message({ emote: {} }))).toMatchObject({ isEmote: false })
   })
 
+  test('recognizes @-replies', () => {
+    expect(toChatMessage(message({ reply: { uid: 7, uname: 'other' } }))).toMatchObject({ isReply: true })
+    expect(toChatMessage(message({ reply: {} }))).toMatchObject({ isReply: false })
+    expect(toChatMessage(message({ reply: undefined }))).toMatchObject({ isReply: false })
+  })
+
   test('says why a message is skipped', () => {
     expect(toChatMessage(message({ uid: 0 }))).toBe('anonymous')
     expect(toChatMessage(message({ sendType: 2 }))).toBe('auto-danmaku')

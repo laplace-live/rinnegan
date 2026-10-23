@@ -35,8 +35,12 @@ const TAPE_MS = 4 * 60_000
 const MAX_DROPPED = 12
 /** Keys this long also match by prefix: 自动融入 cuts sends at `maxLength` */
 const PREFIX_KEY_LENGTH = 8
-/** Keys this long skip the crowd check: a cut send no longer shares the full line's key */
-const LONG_KEY_LENGTH = 16
+/** How far back a cut send looks for the full line */
+const CUT_LOOKBACK_MS = 30_000
+/** The user's own recent sends kept, to tell a line they ignored from one they joined */
+const SENDS_KEPT = 32
+
+import { CrowdIndex } from '@/detect/crowd'
 
 /** A message as {@link TrendTape} keeps it. */
 export interface TapeEntry {
@@ -65,6 +69,8 @@ export class TrendTape {
   /** Reused by every scan; a scan only reads counters it reset itself */
   readonly #counters = new Map<string, Counter>()
   #scan = 0
+  /** Who sent each key on the tape, countable messages only */
+  readonly #senders = new CrowdIndex(TAPE_MS)
 
   /** Arrival time of the newest message */
   get lastAt(): number {
@@ -75,6 +81,7 @@ export class TrendTape {
   add(entry: TapeEntry): void {
     const at = Math.max(entry.at, this.lastAt)
     this.#entries.push(at === entry.at ? entry : { ...entry, at })
+    if (entry.countable) this.#senders.add(0, entry.key, entry.uid, at)
     const cutoff = at - TAPE_MS
     while (this.#head < this.#entries.length && (this.#entries[this.#head] as TapeEntry).at < cutoff) this.#head++
     if (this.#head > 4096 && this.#head * 2 > this.#entries.length) {
@@ -111,6 +118,21 @@ export class TrendTape {
     return null
   }
 
+  /** Whether `send` copies a line others are sending, the only kind 自动融入 makes: the same key, or one it cut short. */
+  followsCrowd(send: ReplaySend, self: number): boolean {
+    if (this.#senders.others(0, send.key, self) >= TRIGGER_USERS - 1) return true
+    if (send.key.length < PREFIX_KEY_LENGTH) return false
+    const users = new Set<number>()
+    for (let i = this.#lowerBound(send.at - CUT_LOOKBACK_MS); i < this.#entries.length; i++) {
+      const entry = this.#entries[i] as TapeEntry
+      if (entry.at >= send.at) break
+      if (!entry.countable || entry.uid === self || entry.key.length <= send.key.length) continue
+      if (entry.key.startsWith(send.key)) users.add(entry.uid)
+      if (users.size >= TRIGGER_USERS - 1) return true
+    }
+    return false
+  }
+
   /** Chatterbox's chats per minute at `at` for `self`: everyone else's sends in the last 30 s. */
   cpm(at: number, self: number): number {
     const to = this.#lowerBound(at + 1)
@@ -144,13 +166,6 @@ export interface ReplaySend {
   /** Trimmed raw text */
   text: string
   key: string
-  /** Other users who sent the same key recently */
-  others: number
-}
-
-/** Whether `send` copies a line the room is sending, the only kind 自动融入 makes. */
-export function followsCrowd(send: ReplaySend): boolean {
-  return send.others >= TRIGGER_USERS - 1 || send.key.length >= LONG_KEY_LENGTH
 }
 
 interface Hypothesis {
@@ -166,6 +181,10 @@ interface Hypothesis {
   lag: number
   /** Line changes in the window this setting predicted */
   hits: number
+  /** Of `hits`, those where the cooldown ruled out another line */
+  ruledOut: number
+  /** Of `hits`, those where another line also completed before the send */
+  contested: number
 }
 
 /** A change to a line others were sending: the sends a fit is measured on. */
@@ -174,12 +193,23 @@ interface Change {
   key: string
   /** Bit `i` set when hypothesis `i` predicted it */
   mask: number
+  /** Bit `i` set when hypothesis `i`'s cooldown also ruled out another line */
+  ruledOut: number
+  /** Bit `i` set when another line also completed before the send, under hypothesis `i` */
+  contested: number
 }
 
 /** The 自动融入 setting that best explains a user's recent line changes. */
 export interface TriggerFit {
   /** Counted sends the setting predicted */
   hits: number
+  /** Hits where the cooldown skipped another line the user didn't join either */
+  ruledOut: number
+  /**
+   * Hits where another line also completed after the cooldown, before the send, and the user sent the first. With one
+   * trend at a time there is no choice to make, and a viewer resting between trends fits as well as 自动融入 does.
+   */
+  contested: number
   /** Counted sends: changes to a line others were sending */
   changes: number
   /** Fixed cooldown, or null for auto */
@@ -193,6 +223,18 @@ export interface TriggerFit {
 
 const SETTINGS = [false, true].flatMap(avoid => [...COOLDOWNS_MS, null].map(cooldownMs => ({ cooldownMs, avoid })))
 const NO_LINES: readonly string[] = []
+
+/** Judgement flags: the setting predicted the send */
+const HIT = 1
+/** Its cooldown skipped a line the user didn't join */
+const RULED_OUT = 2
+/** Another line also completed before the send, and the user sent the first */
+const CONTESTED = 4
+
+/** Whether 自动融入 sending `line` would repeat `sent`, the user's last send, as cut at `maxLength`. */
+function resends(line: string, sent: string): boolean {
+  return line === sent || (sent.length >= PREFIX_KEY_LENGTH && line.startsWith(sent))
+}
 
 function lowerMedian(values: readonly number[]): number {
   const sorted = Float64Array.from(values).sort()
@@ -219,13 +261,15 @@ function sameLine(lineKey: string, sendKey: string): boolean {
 
 /**
  * One user replayed under every 自动融入 setting at once (fixed cooldowns, auto cooldown, avoid-repeat), each
- * predicting the user's next send from the room. Start it at a send that {@link followsCrowd}.
+ * predicting the user's next send from the room. Start it at a send that {@link TrendTape.followsCrowd}.
  */
 export class TriggerReplay {
   readonly #uid: number
   readonly #hypotheses: Hypothesis[]
   /** Oldest first */
   readonly #changes: Change[] = []
+  /** The user's recent sends, oldest first */
+  readonly #sends: ReplaySend[] = []
   #last: ReplaySend
 
   constructor(uid: number, first: ReplaySend) {
@@ -237,30 +281,38 @@ export class TriggerReplay {
       lags: [],
       lag: DEFAULT_LAG_MS,
       hits: 0,
+      ruledOut: 0,
+      contested: 0,
     }))
     this.#last = first
+    this.#sends.push(first)
   }
 
   /** Judge the user's next send, in time order. Sends nobody else made are manual: no setting's cooldown moves. */
   observe(tape: TrendTape, send: ReplaySend): void {
-    if (followsCrowd(send)) {
-      let mask = 0
+    if (tape.followsCrowd(send, this.#uid)) {
+      const change = { at: send.at, key: send.key, mask: 0, ruledOut: 0, contested: 0 }
       for (let i = 0; i < this.#hypotheses.length; i++) {
-        if (this.#judge(tape, this.#hypotheses[i] as Hypothesis, send)) mask |= 1 << i
+        const flags = this.#judge(tape, this.#hypotheses[i] as Hypothesis, send)
+        if (flags & HIT) change.mask |= 1 << i
+        if (flags & RULED_OUT) change.ruledOut |= 1 << i
+        if (flags & CONTESTED) change.contested |= 1 << i
       }
       if (send.key !== this.#last.key) {
-        this.#changes.push({ at: send.at, key: send.key, mask })
-        this.#count(mask, 1)
+        this.#changes.push(change)
+        this.#count(change, 1)
       }
     }
     this.#last = send
+    this.#sends.push(send)
+    if (this.#sends.length > SENDS_KEPT) this.#sends.shift()
   }
 
   /** Drop judged sends older than `cutoff`. */
   forget(cutoff: number): void {
     let drop = 0
     while (drop < this.#changes.length && (this.#changes[drop] as Change).at < cutoff) {
-      this.#count((this.#changes[drop] as Change).mask, -1)
+      this.#count(this.#changes[drop] as Change, -1)
       drop++
     }
     if (drop > 0) this.#changes.splice(0, drop)
@@ -275,6 +327,8 @@ export class TriggerReplay {
     for (const change of this.#changes) if (change.mask & bit) keys.add(change.key)
     return {
       hits: best.hits,
+      ruledOut: best.ruledOut,
+      contested: best.contested,
       changes: this.#changes.length,
       cooldownMs: best.cooldownMs,
       avoid: best.avoid,
@@ -283,19 +337,22 @@ export class TriggerReplay {
     }
   }
 
-  #count(mask: number, step: 1 | -1): void {
+  #count(change: Change, step: 1 | -1): void {
     this.#hypotheses.forEach((hypothesis, i) => {
-      if (mask & (1 << i)) hypothesis.hits += step
+      if (change.mask & (1 << i)) hypothesis.hits += step
+      if (change.ruledOut & (1 << i)) hypothesis.ruledOut += step
+      if (change.contested & (1 << i)) hypothesis.contested += step
     })
   }
 
-  /** Whether `hypothesis` predicts `send`, moving its anchor to the trigger it believes fired. */
-  #judge(tape: TrendTape, hypothesis: Hypothesis, send: ReplaySend): boolean {
+  /** Judgement flags for `send` under `hypothesis`, moving its anchor to the trigger it believes fired. */
+  #judge(tape: TrendTape, hypothesis: Hypothesis, send: ReplaySend): number {
+    const avoid = hypothesis.avoid ? hypothesis.recent : NO_LINES
     let start = this.#wakeAt(tape, hypothesis)
     for (let dropped = 0; dropped <= MAX_DROPPED && send.at >= start && send.at - start <= MAX_WAIT_MS; dropped++) {
-      const trigger = tape.firstTrigger(start, send.at, this.#uid, hypothesis.avoid ? hypothesis.recent : NO_LINES)
+      const trigger = tape.firstTrigger(start, send.at, this.#uid, avoid)
       if (!trigger) break
-      if (trigger.text === this.#last.text && trigger.at + hypothesis.lag - this.#last.at < DUPLICATE_MS) {
+      if (resends(trigger.text, this.#last.text) && trigger.at + hypothesis.lag - this.#last.at < DUPLICATE_MS) {
         // The dropped resend still restarted the cooldown.
         anchorAt(hypothesis, trigger.at, trigger.text)
         start = this.#wakeAt(tape, hypothesis)
@@ -303,14 +360,28 @@ export class TriggerReplay {
       }
       const delay = send.at - trigger.at
       if (delay > MAX_TRIGGER_LAG_MS || !sameLine(trigger.key, send.key)) break
+      const skipped = tape.firstTrigger(hypothesis.anchor, start, this.#uid, [
+        ...avoid,
+        hypothesis.recent.at(-1) as string,
+      ])
+      const rival = tape.firstTrigger(start, send.at, this.#uid, [...avoid, trigger.text])
       hypothesis.lags.push(delay)
       if (hypothesis.lags.length > LAGS_KEPT) hypothesis.lags.shift()
       hypothesis.lag = lowerMedian(hypothesis.lags)
       anchorAt(hypothesis, trigger.at, trigger.text)
-      return true
+      return (
+        HIT | (skipped !== null && !this.#joined(skipped, send.at) ? RULED_OUT : 0) | (rival !== null ? CONTESTED : 0)
+      )
     }
+    // Sent inside this setting's cooldown, so not by 自动融入 under it: the cooldown and avoid list stay put.
+    if (send.at < start) return 0
     anchorAt(hypothesis, send.at - hypothesis.lag, send.text)
-    return false
+    return 0
+  }
+
+  /** Whether the user sent `line` after it completed and before `until`. */
+  #joined(line: TapeEntry, until: number): boolean {
+    return this.#sends.some(sent => sent.at > line.at && sent.at < until && sameLine(line.key, sent.key))
   }
 
   /** When `hypothesis`'s cooldown from its anchor ends. */
