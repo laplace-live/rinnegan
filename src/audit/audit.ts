@@ -5,7 +5,7 @@ import { localDate } from '@/util/console'
 
 /** Keys never written to disk, however deep they sit in an entry. */
 const SECRET_KEYS =
-  /^(cookie|cookies|csrf|csrf_token|bili_jct|sessdata|token|apikey|api_key|authkey|auth_key|password)$/i
+  /^(cookie|cookies|csrf|csrf_token|bili_jct|sessdata|token|refreshtoken|refresh_token|apikey|api_key|authkey|auth_key|password)$/i
 
 /** Deep copy with secret-looking keys replaced, so a careless caller can't leak credentials into the log. */
 export function scrub(value: unknown, depth = 0): unknown {

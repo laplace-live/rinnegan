@@ -16,6 +16,7 @@
     "baseURL": "https://login-sync.laplace.cn",
     "refreshMinutes": 30
   },
+  "loginFile": "data/bilibili-login.json",
   "ban": {
     "dryRun": false,
     "patterns": ["loop", "burst", "template", "blend"],

@@ -7,7 +7,8 @@ Guidance for coding agents working in this repository.
 LAPLACE Rinnegan (輪廻眼) detects 独轮车 — danmaku looped by one user, usually through tools like
 [LAPLACE Chatterbox](https://laplace.live/chatterbox) — in Bilibili Live rooms.
 - **Live mode** reads `LaplaceEvent`s from LAPLACE Event Fetcher (bridge mode) or LAPLACE Event Bridge, and can ban
-  through Bilibili's official silent-user API using cookies from LAPLACE Login Sync. No login-sync token means dry-run.
+  through Bilibili's official silent-user API using cookies from LAPLACE Login Sync or a QR code login (`login`).
+  Neither means dry-run.
 - **Offline mode** replays a LAPLACE Chat archive (`.lca`) through the same detector and ranks spammers with samples.
 
 Layout:
@@ -16,12 +17,12 @@ Layout:
 | --------------- | -------------------------------------------------------------------------- |
 | `src/detect/`   | Canonicalization, timing metrics, crowd index and the streaming `Detector` |
 | `src/sources/`  | `LaplaceEvent` → `ChatMessage`, `.lca` decoding, live bridge connection    |
-| `src/bilibili/` | Bilibili web APIs (silent users, nav, room init) and login-sync cookies    |
+| `src/bilibili/` | Bilibili web APIs (silent users, nav, room init), login-sync and QR login  |
 | `src/store/`    | Persistent ban records (memory, SQLite, Postgres, Redis) and lift rules    |
 | `src/ai/`       | Optional second opinion: Jev decision model or an OpenAI-compatible LLM    |
 | `src/enforce/`  | Ban policy, exemptions, safety brake, dry-run                              |
 | `src/audit/`    | JSONL audit log                                                            |
-| `src/commands/` | `live`, `offline`, `bans`, `unban`                                         |
+| `src/commands/` | `live`, `offline`, `bans`, `unban`, `login`                                |
 | `src/cli.ts`    | Entry point                                                                |
 
 Detection rules are calibrated against real archives in `references/` (gitignored, never commit them). Tests that need

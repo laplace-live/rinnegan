@@ -4,11 +4,21 @@ import type { RinneganConfig } from '@/config'
 import type { BanStore } from '@/store/types'
 import type { FetchLike } from '@/util/fetch'
 
-import { BilibiliClient, CredentialProvider, credentialSummary } from '@/bilibili'
+import { BilibiliClient, CredentialProvider, credentialSummary, loadCredentials, loadQRLogin } from '@/bilibili'
 import { createBanStore, describeStoreUrl } from '@/store'
 import { errorMessage } from '@/util/guards'
 
-/** A Bilibili client on the login-sync cookies, and who they log in as. */
+/** How Rinnegan logs in to Bilibili, from {@link resolveLogin}. */
+export interface Login {
+  method: 'login-sync' | 'qr'
+  /** Names the method in output */
+  label: string
+  credentials: CredentialProvider
+  /** What to do once Bilibili stops accepting the cookies */
+  expired: string
+}
+
+/** A Bilibili client on a login's cookies, and who they log in as. */
 export interface LoginSession {
   client: BilibiliClient
   nav: NavInfo
@@ -16,23 +26,43 @@ export interface LoginSession {
   cookies: number
 }
 
+export const NO_LOGIN = '未提供 LOGIN_SYNC_TOKEN，也未扫码登录（rinnegan login）'
+
+/** The configured login: a Login Sync token wins over a saved QR login; null when there's neither. */
+export async function resolveLogin(config: RinneganConfig, fetch?: FetchLike): Promise<Login | null> {
+  const { loginSync, loginFile } = config
+  if (loginSync.token) {
+    const load = (signal: AbortSignal) =>
+      loadCredentials({
+        token: loginSync.token,
+        baseURL: loginSync.baseURL || undefined,
+        authKey: loginSync.authKey || undefined,
+        fetch,
+        signal,
+      })
+    return {
+      method: 'login-sync',
+      label: 'Login Sync',
+      credentials: new CredentialProvider({ load, ttlMs: loginSync.refreshMinutes * 60_000 }),
+      expired: 'Login Sync 中的 B 站登录已失效，请在浏览器重新登录后同步',
+    }
+  }
+  if (!loginFile || !(await Bun.file(loginFile).exists())) return null
+  return {
+    method: 'qr',
+    label: '扫码登录',
+    // Nothing renews a QR login, so it's read again only once Bilibili rejects it
+    credentials: new CredentialProvider({ load: () => loadQRLogin(loginFile), ttlMs: Number.POSITIVE_INFINITY }),
+    expired: '扫码登录已失效，请重新运行 rinnegan login',
+  }
+}
+
 /**
- * Pull the login-sync cookies and check them with `nav()`; throws in Chinese when they don't log in. Cookies Bilibili
- * rejects later are pulled again once per request, audited as `credentials-refresh`.
+ * Load `login`'s cookies and check them with `nav()`; throws in Chinese when they don't log in. Cookies Bilibili
+ * rejects later are loaded again once per request, audited as `credentials-refresh`.
  */
-export async function connectLoginSync(
-  config: RinneganConfig,
-  fetch?: FetchLike,
-  audit?: AuditLog
-): Promise<LoginSession> {
-  const { loginSync } = config
-  const credentials = new CredentialProvider({
-    token: loginSync.token,
-    baseURL: loginSync.baseURL || undefined,
-    authKey: loginSync.authKey || undefined,
-    ttlMs: loginSync.refreshMinutes * 60_000,
-    fetch,
-  })
+export async function connectBilibili(login: Login, fetch?: FetchLike, audit?: AuditLog): Promise<LoginSession> {
+  const { credentials } = login
   const client = new BilibiliClient({
     credentials: () => credentials.get(),
     onAuthFailure: result => {
@@ -41,10 +71,14 @@ export async function connectLoginSync(
     },
     fetch,
   })
-  const { cookies } = credentialSummary(await credentials.get())
-  const nav = await client.nav()
-  if (!nav.isLogin) throw new Error('Login Sync 中的 B 站登录已失效，请在浏览器重新登录后同步')
-  return { client, nav, cookies }
+  try {
+    const { cookies } = credentialSummary(await credentials.get())
+    const nav = await client.nav()
+    if (!nav.isLogin) throw new Error(login.expired)
+    return { client, nav, cookies }
+  } catch (error) {
+    throw new Error(`无法登录 B 站：${errorMessage(error)}`, { cause: error })
+  }
 }
 
 /** The configured ban store, or null after reporting why it can't be opened. */

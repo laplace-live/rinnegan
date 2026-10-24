@@ -36,6 +36,8 @@ describe('rinnegan CLI', () => {
     expect(help.code).toBe(0)
     expect(help.out).toContain('rinnegan offline')
     expect(help.out).toContain('--login-sync-token')
+    expect(help.out).toContain('rinnegan login')
+    expect(help.out).toContain('--login-file')
     const version = await cli('--version')
     expect(version.out.trim()).toMatch(/^\d+\.\d+\.\d+$/)
   })
@@ -47,6 +49,19 @@ describe('rinnegan CLI', () => {
     const missing = await cli('offline', join(dir, 'nope.lca'))
     expect(missing.code).toBe(1)
     expect(missing.err).toContain('找不到归档文件')
+  })
+
+  test('looks for a saved QR login in data/bilibili-login.json', async () => {
+    const none = await cli('bans', '--room', '1', '--remote')
+    expect(none.code).toBe(1)
+    expect(none.err).toContain('未提供 LOGIN_SYNC_TOKEN，也未扫码登录（rinnegan login），无法访问禁言接口')
+    // Damaged, so it fails before any request
+    const path = join(dir, 'data', 'bilibili-login.json')
+    await Bun.write(path, '{}')
+    const damaged = await cli('bans', '--room', '1', '--remote')
+    rmSync(path)
+    expect(damaged.code).toBe(1)
+    expect(damaged.err).toContain('无法登录 B 站：扫码登录 data/bilibili-login.json 已损坏')
   })
 
   test('offline ranks an injected loop and writes reports', async () => {

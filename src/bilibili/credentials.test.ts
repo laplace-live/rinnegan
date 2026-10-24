@@ -273,7 +273,10 @@ describe('CredentialProvider', () => {
     options: Partial<CredentialProviderOptions> = {}
   ) {
     const server = recordingFetch(reply)
-    const provider = new CredentialProvider({ token: TOKEN, baseURL: BASE, fetch: server.fetch, ...options })
+    const provider = new CredentialProvider({
+      load: signal => loadCredentials({ token: TOKEN, baseURL: BASE, fetch: server.fetch, signal }),
+      ...options,
+    })
     return { server, provider }
   }
 

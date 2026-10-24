@@ -4,28 +4,29 @@ import type { FetchLike } from '@/util/fetch'
 
 import { AuditLog, listAuditFiles, readAuditEntries } from '@/audit/audit'
 import { describeResult } from '@/bilibili'
-import { connectLoginSync, openStore } from '@/commands/session'
+import { connectBilibili, NO_LOGIN, openStore, resolveLogin } from '@/commands/session'
 import { API_GAP_MS, liftSilentUser } from '@/enforce/enforcer'
 import { describeStoreUrl } from '@/store'
 import { count, dateTime, fail, log, style, warn } from '@/util/console'
 import { errorMessage } from '@/util/guards'
 
-/** A logged-in client from the login-sync token, or null after printing why not. */
+/** A logged-in client from Login Sync or the saved QR login, or null after printing why not. */
 async function loggedInClient(
   config: RinneganConfig,
   fetch?: FetchLike,
   audit?: AuditLog
 ): Promise<BilibiliClient | null> {
-  if (!config.loginSync.token) {
-    fail('需要 LOGIN_SYNC_TOKEN（或 --login-sync-token）才能访问禁言接口')
+  const login = await resolveLogin(config, fetch)
+  if (!login) {
+    fail(`${NO_LOGIN}，无法访问禁言接口`)
     return null
   }
   try {
-    const { client, nav } = await connectLoginSync(config, fetch, audit)
-    log(style.gray(`登录账号 ${nav.uname}（${nav.uid}）`))
+    const { client, nav } = await connectBilibili(login, fetch, audit)
+    log(style.gray(`登录账号 ${nav.uname}（${nav.uid}）· ${login.label}`))
     return client
   } catch (error) {
-    fail(`无法使用 Login Sync 凭据：${errorMessage(error)}`)
+    fail(errorMessage(error))
     return null
   }
 }

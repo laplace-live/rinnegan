@@ -244,7 +244,7 @@ export function briefResult(result: ApiResult): { ok: boolean; code: number; mes
 }
 
 /** One-line description of a failed result for logs, e.g. `账号未登录（code -101）`. */
-export function describeResult(result: ApiResult): string {
+export function describeResult(result: Pick<ApiResult, 'code' | 'message' | 'status'>): string {
   const http = result.status !== 0 && (result.status < 200 || result.status >= 300) ? `，HTTP ${result.status}` : ''
   return `${result.message || '未知错误'}（code ${result.code}${http}）`
 }

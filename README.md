@@ -5,8 +5,8 @@ Detects **独轮车** — one viewer looping the same (or nearly the same) danma
 official room silent-user API.
 - **Offline**: replay a [LAPLACE Chat](https://chat.laplace.live) archive (`.lca`) and rank spammers with samples.
 - **Live**: read events from [LAPLACE Event Fetcher](https://subspace.institute/docs/laplace-chat/event-fetcher)
-  (bridge mode) or LAPLACE Event Bridge, judge every sender in real time, and ban with a reason. Without a
-  [LAPLACE Login Sync](https://github.com/laplace-live/login-sync) token it runs as a dry run.
+  (bridge mode) or LAPLACE Event Bridge, judge every sender in real time, and ban with a reason. With neither a
+  [LAPLACE Login Sync](https://github.com/laplace-live/login-sync) token nor a QR code login, it runs as a dry run.
 - Every decision goes to a JSONL **audit log**; real bans also go to a **ban store** (SQLite, Postgres or Redis) that
   other tools can build on — e.g. lift a ban once the user spends ¥30 in the room.
 
@@ -15,6 +15,7 @@ bun install
 bun run src/cli.ts offline references/archive.lca
 bun run src/cli.ts live --url ws://localhost:8080 --room 25034104          # dry run
 LOGIN_SYNC_TOKEN='uuid@password' bun run src/cli.ts live --url ws://localhost:8080 --room 25034104
+bun run src/cli.ts login                                                   # or log in by QR code instead
 ```
 
 `bun run build` compiles a standalone `dist/rinnegan` binary.
@@ -83,8 +84,8 @@ bun run src/cli.ts live --url ws://lef.example:8080 --token "$BRIDGE_TOKEN" --ro
 - `--url` points at LAPLACE Event Fetcher with `BRIDGE_MODE=1` (`ws://host:8080`) or Event Bridge (`ws://localhost:9696`).
   Rooms go to the fetcher as `?rooms=` and are filtered client-side as well; `--token` is its `BRIDGE_TOKEN`.
 - The event source must be logged in (`LOGIN_SYNC_TOKEN` on the fetcher), otherwise Bilibili hides uids.
-- `LOGIN_SYNC_TOKEN` (or `--login-sync-token`) is the `uuid@password` from the Login Sync extension; the Bilibili
-  account must be the streamer or a room admin. Without it, or with `--dry-run`, bans are simulated and audited.
+- Bans need a Bilibili account that is the streamer or a room admin, logged in through Login Sync or a QR code
+  ([below](#logging-in)). Without a login, or with `--dry-run`, bans are simulated and audited.
 - On start Rinnegan reads each room's silent list (skipping users already banned, and proving it may moderate the
   room — a room it can't moderate falls back to detection only).
 - Never banned: the streamer, room admins, `--exempt-uid`, optionally guards (`--exempt-guards`) and medal levels
@@ -92,6 +93,20 @@ bun run src/cli.ts live --url ws://lef.example:8080 --token "$BRIDGE_TOKEN" --ro
 - Safety brake: at most `--max-per-minute` bans per room per minute (default 5) and `--max-bans` per run (default 100).
 - Reason (`msg`): `--reason '独轮车 ×{count}：{sample}'` (also `{minutes}`, `{pattern}`, `{score}`), capped at 60 chars.
 - Bans are permanent by default (`--ban-hours -1`); `--expire-after <hours>` makes Rinnegan lift them itself.
+
+### Logging in
+
+- **LAPLACE Login Sync**: `LOGIN_SYNC_TOKEN` (or `--login-sync-token`) is the `uuid@password` the extension shows.
+  The cookies are pulled again every 30 minutes (`loginSync.refreshMinutes`) and whenever Bilibili rejects them, so
+  they follow the browser's login.
+- **QR code**: `bun run src/cli.ts login` draws a code in the terminal; scan it with the Bilibili app and confirm. The
+  cookies are saved to `data/bilibili-login.json` (`--login-file`, `RINNEGAN_LOGIN_FILE`), readable by its owner
+  only. On Windows the file takes its folder's permissions instead, so keep it in a folder only you can read. To log
+  out, stop any running `live` and delete the file; the session stays valid on Bilibili's side until it expires.
+  Nothing renews the cookies: once Bilibili stops accepting them, run `login` again, and a running `live` picks up
+  the new login the next time Bilibili rejects the old one.
+
+A Login Sync token wins when both are set. `bans` and `unban` log in the same way.
 
 ### AI review (optional)
 
@@ -148,6 +163,7 @@ Precedence: defaults < `rinnegan.config.json` (or `--config`) < environment < fl
 | Variable                                                                                                                                                    | Purpose                         |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
 | `LOGIN_SYNC_TOKEN`, `LOGIN_SYNC_URL`, `LOGIN_SYNC_AUTH_KEY`                                                                                                 | Bilibili cookies via Login Sync |
+| `RINNEGAN_LOGIN_FILE`                                                                                                                                       | Saved QR code login             |
 | `RINNEGAN_EVENT_URL`, `RINNEGAN_EVENT_TOKEN`, `RINNEGAN_ROOMS`                                                                                              | Event source                    |
 | `RINNEGAN_STORE_URL`, `RINNEGAN_LOG_DIR`, `RINNEGAN_REPORT_DIR`                                                                                             | Persistence                     |
 | `RINNEGAN_AI_MODE`, `RINNEGAN_AI_PROVIDER`, `RINNEGAN_AI_PROTOCOL`, `RINNEGAN_AI_BASE`, `RINNEGAN_AI_API_KEY`, `RINNEGAN_AI_MODEL`, `RINNEGAN_AI_THRESHOLD` | AI review                       |
