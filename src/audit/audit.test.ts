@@ -24,11 +24,12 @@ describe('AuditLog', () => {
     audit.write('session-start', {
       loginSync: { token: 'uuid@pw' },
       cookie: 'SESSDATA=x',
-      nested: [{ csrf: 'y', refreshToken: 'rt-secret' }],
+      nested: [{ csrf: 'y', refreshToken: 'rt-camel', refresh_token: 'rt-snake' }],
     })
     const text = await Bun.file(audit.path).text()
     expect(text).not.toContain('uuid@pw')
-    expect(text).not.toContain('rt-secret')
+    expect(text).not.toContain('rt-camel')
+    expect(text).not.toContain('rt-snake')
     expect(text).not.toContain('SESSDATA')
     expect(text).toContain('[redacted]')
   })

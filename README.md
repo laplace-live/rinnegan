@@ -5,8 +5,8 @@ Detects **独轮车** — one viewer looping the same (or nearly the same) danma
 official room silent-user API.
 - **Offline**: replay a [LAPLACE Chat](https://chat.laplace.live) archive (`.lca`) and rank spammers with samples.
 - **Live**: read events from [LAPLACE Event Fetcher](https://subspace.institute/docs/laplace-chat/event-fetcher)
-  (bridge mode) or LAPLACE Event Bridge, judge every sender in real time, and ban with a reason. Without a
-  [LAPLACE Login Sync](https://github.com/laplace-live/login-sync) token or a QR code login it runs as a dry run.
+  (bridge mode) or LAPLACE Event Bridge, judge every sender in real time, and ban with a reason. With neither a
+  [LAPLACE Login Sync](https://github.com/laplace-live/login-sync) token nor a QR code login, it runs as a dry run.
 - Every decision goes to a JSONL **audit log**; real bans also go to a **ban store** (SQLite, Postgres or Redis) that
   other tools can build on — e.g. lift a ban once the user spends ¥30 in the room.
 
@@ -101,8 +101,10 @@ bun run src/cli.ts live --url ws://lef.example:8080 --token "$BRIDGE_TOKEN" --ro
   they follow the browser's login.
 - **QR code**: `bun run src/cli.ts login` draws a code in the terminal; scan it with the Bilibili app and confirm. The
   cookies are saved to `data/bilibili-login.json` (`--login-file`, `RINNEGAN_LOGIN_FILE`), readable by its owner
-  only; delete the file to log out. Nothing renews them: once Bilibili stops accepting them, run `login` again, and a
-  running `live` picks up the new login the next time Bilibili rejects the old one.
+  only. On Windows the file takes its folder's permissions instead, so keep it in a folder only you can read. To log
+  out, stop any running `live` and delete the file; the session stays valid on Bilibili's side until it expires.
+  Nothing renews the cookies: once Bilibili stops accepting them, run `login` again, and a running `live` picks up
+  the new login the next time Bilibili rejects the old one.
 
 A Login Sync token wins when both are set. `bans` and `unban` log in the same way.
 

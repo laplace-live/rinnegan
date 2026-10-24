@@ -42,7 +42,7 @@ describe('rinnegan login', () => {
   }
 
   test('draws the code, waits for the app and saves the cookies', async () => {
-    const passport = fakePassport([WAITING_SCAN, WAITING_CONFIRM, SUCCESS])
+    const passport = fakePassport([WAITING_SCAN, WAITING_CONFIRM, SUCCESS], { ticket: true })
     const { code, loginFile, out } = await login(passport.fetch, { loginSync: { token: 'uuid@pw' } })
     expect(code).toBe(0)
     expect(await loadQRLogin(loginFile)).toEqual({ cookie: QR_COOKIE, csrf: 'qrcsrf', uid: 9 })

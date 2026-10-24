@@ -27,12 +27,21 @@ export function qrCodeUrl(key: string): string {
   return `https://account.bilibili.com/h5/account-h5/auth/scan-web?navhide=1&callback=close&qrcode_key=${key}&from=`
 }
 
+/** Where a confirmed login points: the cookies in the query (legacy), or a one-use ticket to exchange for them. */
+function loginUrl(ticket: boolean): string {
+  const url = new URL('https://passport.biligame.com/x/passport-login/web/crossDomain')
+  if (ticket) url.searchParams.set('ticket', 'one-use-ticket')
+  else for (const [name, value] of Object.entries(QR_CREDENTIALS)) url.searchParams.set(name, `${value}`)
+  return url.href
+}
+
 /**
  * `fetch` for Bilibili's QR login: issues codes `key1`, `key2`…, and answers each poll with the next of `states`
- * (`QR_CODE_STATUS` codes, expired once they run out). Success hands over {@link QR_CREDENTIALS} in the login URL, the
- * legacy way that needs no ticket exchange. Everything else goes to {@link fakeBilibili}, logged in as 主播 (uid 9).
+ * (`QR_CODE_STATUS` codes, expired once they run out). Success hands over {@link QR_CREDENTIALS} in the login URL, or
+ * with `ticket` as a one-use ticket exchanged for `Set-Cookie` headers. Everything else goes to {@link fakeBilibili},
+ * logged in as 主播 (uid 9).
  */
-export function fakePassport(states: number[], options: { isLogin?: boolean } = {}) {
+export function fakePassport(states: number[], options: { isLogin?: boolean; ticket?: boolean } = {}) {
   const bilibili = fakeBilibili({ uid: 9, uname: '主播', isLogin: options.isLogin })
   const queue = [...states]
   const polls: string[] = []
@@ -45,20 +54,25 @@ export function fakePassport(states: number[], options: { isLogin?: boolean } = 
     if (url.startsWith(`${QR_LOGIN_ENDPOINTS.POLL}?`)) {
       polls.push(new URL(url).searchParams.get('qrcode_key') ?? '')
       const state = queue.shift() ?? QR_CODE_STATUS.EXPIRED
-      const login = new URL('https://passport.biligame.com/x/passport-login/web/crossDomain')
       const success = state === QR_CODE_STATUS.SUCCESS
-      if (success) for (const [name, value] of Object.entries(QR_CREDENTIALS)) login.searchParams.set(name, `${value}`)
       return Response.json({
         code: 0,
         message: '0',
         ttl: 1,
         data: {
-          url: success ? login.href : '',
+          url: success ? loginUrl(options.ticket === true) : '',
           refresh_token: success ? 'refresh-token' : '',
           timestamp: 0,
           code: state,
         },
       })
+    }
+    if (url === loginUrl(true)) {
+      const headers = new Headers({ location: 'https://www.bilibili.com/' })
+      for (const [name, value] of Object.entries(QR_CREDENTIALS)) {
+        headers.append('set-cookie', `${name}=${encodeURIComponent(`${value}`)}; Path=/; Domain=.bilibili.com`)
+      }
+      return new Response(null, { status: 302, headers })
     }
     return bilibili.fetch(url, init)
   }

@@ -71,7 +71,8 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
 
   log(style.bold(`LAPLACE Rinnegan 輪廻眼 ${VERSION} · 实时模式`))
 
-  const login = await resolveLogin(config, options.fetch)
+  // An explicit dry run needs no login, so a broken saved one can't stop it
+  const login = config.ban.dryRun ? null : await resolveLogin(config, options.fetch)
   let dryRunReason: string | null = null
   if (config.ban.dryRun) dryRunReason = '已指定 --dry-run'
   else if (!login) dryRunReason = NO_LOGIN

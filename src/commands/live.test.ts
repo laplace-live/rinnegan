@@ -122,6 +122,37 @@ describe('live mode end to end', () => {
     expect(session?.enforcer.stats.banned).toBe(1)
   }, 20_000)
 
+  test('an explicit dry run never logs in, so a broken saved login cannot stop it', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'rinnegan-live-'))
+    bridge = startFakeBridge()
+    const loginFile = join(dir, 'login.json')
+    await Bun.write(loginFile, '{}')
+    const calls: string[] = []
+    const config = mergeConfig(DEFAULT_CONFIG, {
+      logDir: dir,
+      live: { url: bridge.url, rooms: [ROOM] },
+      loginFile,
+      ban: { dryRun: true },
+    })
+    session = await startLive({
+      config,
+      verbose: false,
+      statusEvery: 0,
+      fetch: (url: string) => {
+        calls.push(url)
+        return Response.json({ code: 0, data: { room_id: ROOM, short_id: 0, uid: 1 } })
+      },
+    })
+    expect(session).not.toBeNull()
+    const entries = await readAuditEntries(session?.audit.path ?? '')
+    expect(entries.find(entry => entry.event === 'session-start')).toMatchObject({
+      dryRun: true,
+      dryRunReason: '已指定 --dry-run',
+      login: null,
+    })
+    expect(calls.every(url => url.includes('room_init'))).toBe(true)
+  })
+
   test('a saved QR login takes live mode out of dry run', async () => {
     dir = mkdtempSync(join(tmpdir(), 'rinnegan-live-'))
     bridge = startFakeBridge()

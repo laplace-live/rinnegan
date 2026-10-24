@@ -39,6 +39,11 @@ describe('loginWithQRCode', () => {
     expect(passport.polls).toEqual(['key1', 'key1', 'key1', 'key1'])
   })
 
+  test('exchanges a one-use ticket for the cookies', async () => {
+    const { result } = login(fakePassport([SUCCESS], { ticket: true }).fetch)
+    expect(await result).toEqual({ credentials: QR_CREDENTIALS, refreshToken: 'refresh-token' })
+  })
+
   test('shows a new code when one expires and gives up after the third', async () => {
     const renewed = login(fakePassport([WAITING_CONFIRM, EXPIRED, WAITING_CONFIRM, SUCCESS]).fetch)
     expect((await renewed.result).credentials).toEqual(QR_CREDENTIALS)
