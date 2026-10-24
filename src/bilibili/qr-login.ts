@@ -6,6 +6,7 @@ import { cookieStringFromCredentials, generateQRCode, pollQRCode, QRLoginError }
 import type { BilibiliCredentials } from '@/bilibili/types'
 import type { FetchLike } from '@/util/fetch'
 
+import { describeResult } from '@/bilibili/client'
 import { errorMessage, isRecord, readPath, toId } from '@/util/guards'
 
 /** A QR login as `rinnegan login` saves it: the session cookies, plus what Bilibili's cookie refresh would take. */
@@ -23,11 +24,10 @@ export interface QRLoginFlowOptions {
   fetch?: FetchLike
   /** Between polls, ms */
   pollIntervalMs?: number
-  /** Codes to issue before giving up; each lasts about 3 minutes */
-  maxCodes?: number
 }
 
 const POLL_INTERVAL_MS = 2000
+/** Codes to issue before giving up; each lasts about 3 minutes */
 const MAX_CODES = 3
 const REQUEST_TIMEOUT_MS = 15_000
 
@@ -36,9 +36,9 @@ const REQUEST_TIMEOUT_MS = 15_000
  * expires. Errors are Chinese and never carry the login.
  */
 export async function loginWithQRCode(options: QRLoginFlowOptions): Promise<QRLogin> {
-  const { fetch, pollIntervalMs = POLL_INTERVAL_MS, maxCodes = MAX_CODES } = options
-  for (let attempt = 1; attempt <= maxCodes; attempt++) {
-    const { url, qrcodeKey } = await send(fetch, request => generateQRCode(request))
+  const { fetch, pollIntervalMs = POLL_INTERVAL_MS } = options
+  for (let attempt = 1; attempt <= MAX_CODES; attempt++) {
+    const { url, qrcodeKey } = await send(fetch, generateQRCode)
     options.onCode(url, attempt)
     let status = ''
     for (;;) {
@@ -49,13 +49,13 @@ export async function loginWithQRCode(options: QRLoginFlowOptions): Promise<QRLo
       if (result.status === 'expired') break
       if (result.status === 'unknown') {
         const { code, message } = result.response.data
-        throw new Error(`B 站返回了未知的扫码状态：${message || '无说明'}（code ${code}）`)
+        throw new Error(`B 站返回了未知的扫码状态：${describeResult({ code, message, status: 0 })}`)
       }
       if (result.status === 'waiting_confirm' && status !== result.status) options.onScanned?.()
       status = result.status
     }
   }
-  throw new Error(`连续 ${maxCodes} 个二维码都已过期`)
+  throw new Error(`连续 ${MAX_CODES} 个二维码都已过期`)
 }
 
 /** Request credentials for a QR login's cookies. */
@@ -86,33 +86,6 @@ export async function loadQRLogin(path: string): Promise<BilibiliCredentials> {
   return credentialsFromQRLogin(credentials)
 }
 
-/** The QR login saved at `path`, read on first use and again after `invalidate()`. */
-export class QRLoginProvider {
-  readonly #path: string
-  #value: Promise<BilibiliCredentials> | null = null
-
-  constructor(path: string) {
-    this.#path = path
-  }
-
-  get(): Promise<BilibiliCredentials> {
-    if (!this.#value) {
-      const value = loadQRLogin(this.#path)
-      // A failed read isn't kept, so the next call reads again
-      value.catch(() => {
-        if (this.#value === value) this.#value = null
-      })
-      this.#value = value
-    }
-    return this.#value
-  }
-
-  /** Read the file again on the next `get()`, e.g. after Bilibili rejected the cookies and `rinnegan login` ran again. */
-  invalidate(): void {
-    this.#value = null
-  }
-}
-
 /** One login request with a timeout, its failure described in Chinese. */
 async function send<T>(fetch: FetchLike | undefined, call: (options: QRLoginOptions) => Promise<T>): Promise<T> {
   try {
@@ -132,7 +105,7 @@ function describeQRLoginError(error: unknown): string {
       case 'http':
         return `B 站返回 HTTP ${error.status}${error.status === 412 ? '，可能被风控拦截' : ''}`
       case 'api':
-        return `B 站拒绝了请求：${error.apiMessage || '无说明'}（code ${error.code}）`
+        return `B 站拒绝了请求：${describeResult({ code: error.code ?? 0, message: error.apiMessage ?? '', status: 0 })}`
       case 'response':
         return 'B 站的响应格式无法识别'
       case 'credentials':

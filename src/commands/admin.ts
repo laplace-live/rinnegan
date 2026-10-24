@@ -4,7 +4,7 @@ import type { FetchLike } from '@/util/fetch'
 
 import { AuditLog, listAuditFiles, readAuditEntries } from '@/audit/audit'
 import { describeResult } from '@/bilibili'
-import { connectBilibili, LOGIN_METHOD_LABELS, loginMethod, openStore } from '@/commands/session'
+import { connectBilibili, NO_LOGIN, openStore, resolveLogin } from '@/commands/session'
 import { API_GAP_MS, liftSilentUser } from '@/enforce/enforcer'
 import { describeStoreUrl } from '@/store'
 import { count, dateTime, fail, log, style, warn } from '@/util/console'
@@ -16,14 +16,14 @@ async function loggedInClient(
   fetch?: FetchLike,
   audit?: AuditLog
 ): Promise<BilibiliClient | null> {
-  const method = await loginMethod(config)
-  if (!method) {
-    fail('需要 LOGIN_SYNC_TOKEN（或 --login-sync-token），或先用 rinnegan login 扫码登录，才能访问禁言接口')
+  const login = await resolveLogin(config, fetch)
+  if (!login) {
+    fail(`${NO_LOGIN}，无法访问禁言接口`)
     return null
   }
   try {
-    const { client, nav } = await connectBilibili(config, method, fetch, audit)
-    log(style.gray(`登录账号 ${nav.uname}（${nav.uid}）· ${LOGIN_METHOD_LABELS[method]}`))
+    const { client, nav } = await connectBilibili(login, fetch, audit)
+    log(style.gray(`登录账号 ${nav.uname}（${nav.uid}）· ${login.label}`))
     return client
   } catch (error) {
     fail(errorMessage(error))

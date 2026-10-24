@@ -6,36 +6,28 @@ import { QR_CODE_STATUS, QR_LOGIN_ENDPOINTS } from '@laplace.live/bilibili-qr'
 
 import type { FetchLike } from '@/util/fetch'
 
-import { credentialsFromQRLogin, loadQRLogin, loginWithQRCode, QRLoginProvider, saveQRLogin } from '@/bilibili/qr-login'
+import { credentialsFromQRLogin, loadQRLogin, loginWithQRCode, saveQRLogin } from '@/bilibili/qr-login'
 import { fakePassport, QR_COOKIE, QR_CREDENTIALS, qrLogin } from '@/testing/qr-login'
 
 const { SUCCESS, WAITING_SCAN, WAITING_CONFIRM, EXPIRED } = QR_CODE_STATUS
 
 /** Logs in without waiting between polls, noting each code shown and each scan. */
-function login(fetch: FetchLike, maxCodes?: number) {
+function login(fetch: FetchLike) {
   const shown: string[] = []
   const result = loginWithQRCode({
     fetch,
     pollIntervalMs: 0,
-    maxCodes,
     onCode: (url, attempt) => shown.push(`code ${attempt}: ${new URL(url).searchParams.get('qrcode_key')}`),
     onScanned: () => shown.push('scanned'),
   })
   return { result, shown }
 }
 
-/** The message the login rejects with once Bilibili answers a poll with `poll`. */
-async function pollFailure(poll: () => Response | Promise<Response>): Promise<string> {
+/** Expects the login to reject with exactly `message` once Bilibili answers a poll with `poll`. */
+function pollFails(poll: () => Response | Promise<Response>, message: string) {
   const passport = fakePassport([])
   const fetch: FetchLike = (url, init) => (url.startsWith(QR_LOGIN_ENDPOINTS.POLL) ? poll() : passport.fetch(url, init))
-  const error = await login(fetch).result.then(
-    () => {
-      throw new Error('expected the login to fail')
-    },
-    (error: unknown) => error
-  )
-  expect(error).toBeInstanceOf(Error)
-  return (error as Error).message
+  return expect(login(fetch).result).rejects.toThrow(new Error(message))
 }
 
 describe('loginWithQRCode', () => {
@@ -47,36 +39,30 @@ describe('loginWithQRCode', () => {
     expect(passport.polls).toEqual(['key1', 'key1', 'key1', 'key1'])
   })
 
-  test('shows a new code when one expires and gives up after maxCodes', async () => {
+  test('shows a new code when one expires and gives up after the third', async () => {
     const renewed = login(fakePassport([WAITING_CONFIRM, EXPIRED, WAITING_CONFIRM, SUCCESS]).fetch)
     expect((await renewed.result).credentials).toEqual(QR_CREDENTIALS)
     expect(renewed.shown).toEqual(['code 1: key1', 'scanned', 'code 2: key2', 'scanned'])
 
-    const passport = fakePassport([WAITING_SCAN, EXPIRED, EXPIRED, SUCCESS])
-    const expired = login(passport.fetch, 2)
-    await expect(expired.result).rejects.toThrow('连续 2 个二维码都已过期')
-    expect(expired.shown).toEqual(['code 1: key1', 'code 2: key2'])
-    expect(passport.polls).toEqual(['key1', 'key1', 'key2'])
+    const passport = fakePassport([WAITING_SCAN, EXPIRED, EXPIRED, EXPIRED, SUCCESS])
+    const expired = login(passport.fetch)
+    await expect(expired.result).rejects.toThrow(new Error('连续 3 个二维码都已过期'))
+    expect(expired.shown).toEqual(['code 1: key1', 'code 2: key2', 'code 3: key3'])
+    expect(passport.polls).toEqual(['key1', 'key1', 'key2', 'key3'])
   })
 
   test('describes failures in Chinese', async () => {
-    expect(await pollFailure(() => new Response('', { status: 412 }))).toBe('B 站返回 HTTP 412，可能被风控拦截')
-    expect(await pollFailure(() => Response.json({ code: -400, message: '请求错误' }))).toBe(
-      'B 站拒绝了请求：请求错误（code -400）'
-    )
-    expect(await pollFailure(() => new Response('<html>'))).toBe('B 站的响应格式无法识别')
-    expect(await pollFailure(() => Response.json({ code: 0, data: { code: SUCCESS, url: '' } }))).toBe(
-      '已确认登录，但没能取得 Cookie'
-    )
-    expect(await pollFailure(() => Response.json({ code: 0, data: { code: 86039, message: '二维码已失效' } }))).toBe(
+    await pollFails(() => new Response('', { status: 412 }), 'B 站返回 HTTP 412，可能被风控拦截')
+    await pollFails(() => Response.json({ code: -400, message: '请求错误' }), 'B 站拒绝了请求：请求错误（code -400）')
+    await pollFails(() => Response.json({ code: -400 }), 'B 站拒绝了请求：未知错误（code -400）')
+    await pollFails(() => new Response('<html>'), 'B 站的响应格式无法识别')
+    await pollFails(() => Response.json({ code: 0, data: { code: SUCCESS, url: '' } }), '已确认登录，但没能取得 Cookie')
+    await pollFails(
+      () => Response.json({ code: 0, data: { code: 86039, message: '二维码已失效' } }),
       'B 站返回了未知的扫码状态：二维码已失效（code 86039）'
     )
-    expect(await pollFailure(() => Promise.reject(new DOMException('The operation timed out.', 'TimeoutError')))).toBe(
-      '请求 B 站超时'
-    )
-    expect(await pollFailure(() => Promise.reject(new TypeError('Unable to connect')))).toBe(
-      '无法连接 B 站：Unable to connect'
-    )
+    await pollFails(() => Promise.reject(new DOMException('The operation timed out.', 'TimeoutError')), '请求 B 站超时')
+    await pollFails(() => Promise.reject(new TypeError('Unable to connect')), '无法连接 B 站：Unable to connect')
   })
 })
 
@@ -109,7 +95,7 @@ describe('saved QR login', () => {
   test('explains a missing or damaged login without quoting it', async () => {
     dir = mkdtempSync(join(tmpdir(), 'rinnegan-qr-'))
     const path = join(dir, 'login.json')
-    await expect(loadQRLogin(path)).rejects.toThrow(`找不到扫码登录 ${path}，请先运行 rinnegan login`)
+    await expect(loadQRLogin(path)).rejects.toThrow(new Error(`找不到扫码登录 ${path}，请先运行 rinnegan login`))
     const { DedeUserID__ckMd5, ...withoutCkMd5 } = QR_CREDENTIALS
     await saveQRLogin(path, { credentials: withoutCkMd5, refreshToken: '' })
     expect((await loadQRLogin(path)).uid).toBe(9)
@@ -124,25 +110,7 @@ describe('saved QR login', () => {
     ]
     for (const text of damaged) {
       writeFileSync(path, text)
-      const error = await loadQRLogin(path).then(
-        () => null,
-        (error: Error) => error
-      )
-      expect(error?.message).toBe(`扫码登录 ${path} 已损坏，请重新运行 rinnegan login`)
+      await expect(loadQRLogin(path)).rejects.toThrow(new Error(`扫码登录 ${path} 已损坏，请重新运行 rinnegan login`))
     }
-  })
-
-  test('QRLoginProvider reads the file again after invalidate() or a failed read', async () => {
-    dir = mkdtempSync(join(tmpdir(), 'rinnegan-qr-'))
-    const path = join(dir, 'login.json')
-    const provider = new QRLoginProvider(path)
-    await expect(provider.get()).rejects.toThrow('找不到扫码登录')
-
-    await saveQRLogin(path, qrLogin({ bili_jct: 'first' }))
-    expect((await provider.get()).csrf).toBe('first')
-    await saveQRLogin(path, qrLogin({ bili_jct: 'second' }))
-    expect((await provider.get()).csrf).toBe('first')
-    provider.invalidate()
-    expect((await provider.get()).csrf).toBe('second')
   })
 })

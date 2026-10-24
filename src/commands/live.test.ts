@@ -57,7 +57,6 @@ describe('live mode end to end', () => {
       logDir: dir,
       live: { url: bridge.url, rooms: [ROOM] },
       loginSync: { token: '' },
-      loginFile: join(dir, 'login.json'),
     })
     session = await startLive({
       config,
@@ -76,7 +75,11 @@ describe('live mode end to end', () => {
     await until(async () => (await readAuditEntries(audit?.path ?? '')).some(entry => entry.event === 'ban'))
     const entries = await readAuditEntries(audit?.path ?? '')
     const ban = entries.find(entry => entry.event === 'ban')
-    expect(ban).toMatchObject({ uid: 4242, dryRun: true, dryRunReason: '未提供 LOGIN_SYNC_TOKEN，也未扫码登录' })
+    expect(ban).toMatchObject({
+      uid: 4242,
+      dryRun: true,
+      dryRunReason: '未提供 LOGIN_SYNC_TOKEN，也未扫码登录（rinnegan login）',
+    })
     expect(String(ban?.reason)).toContain('关注主播谢谢喵')
     expect(entries.find(entry => entry.event === 'session-start')).toMatchObject({
       dryRun: true,

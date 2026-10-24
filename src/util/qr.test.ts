@@ -25,7 +25,7 @@ function blocks(rendered: string): boolean[][] {
 
 describe('renderQRCode', () => {
   const { data } = encode(URL, { border: 2 })
-  // The odd module count leaves half a line past the last row, drawn light
+  // The odd module count leaves half a line past the last row, with no blocks
   const pastEnd = data.map(() => false)
 
   test('in color, blocks draw the dark modules, black on bright white', () => {
@@ -40,7 +40,7 @@ describe('renderQRCode', () => {
   test('plain, blocks draw the light modules for a dark terminal', () => {
     const rendered = renderQRCode(URL, false)
     expect(rendered).toBe(stripVTControlCharacters(rendered))
-    expect(blocks(rendered)).toEqual([...data, pastEnd].map(row => row.map(dark => !dark)))
+    expect(blocks(rendered)).toEqual([...data.map(row => row.map(dark => !dark)), pastEnd])
   })
 
   test("fits Bilibili's login URL in a small terminal", () => {

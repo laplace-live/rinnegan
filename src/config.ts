@@ -65,7 +65,7 @@ export interface RinneganConfig {
   detector: Partial<DetectorOptions>
   live: LiveConfig
   loginSync: LoginSyncConfig
-  /** Where `rinnegan login` saves a QR login, used when there's no Login Sync token */
+  /** Where `rinnegan login` saves a QR login, used when there's no Login Sync token; empty for none */
   loginFile: string
   ban: BanConfig
   /** `sqlite:<path>`, `memory:`, `postgres://…` or `redis://…` */
@@ -92,7 +92,7 @@ export const DEFAULT_CONFIG: RinneganConfig = {
     authKey: '',
     refreshMinutes: 30,
   },
-  loginFile: 'data/bilibili-login.json',
+  loginFile: '',
   ban: {
     dryRun: false,
     patterns: ['loop', 'burst', 'template', 'blend'],

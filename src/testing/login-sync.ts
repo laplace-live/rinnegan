@@ -40,14 +40,16 @@ export function moderatorBlob(token: string, csrf: string, uid: number): Promise
 }
 
 /**
- * `fetch` for a fake login-sync server and Bilibili: serves `blob` for `token`'s uuid (when given), logs in as `uid`,
- * resolves every room to `roomId`, and records each POST. The silent list holds `silent`; every other POST succeeds.
+ * `fetch` for a fake login-sync server and Bilibili: serves `blob` for `token`'s uuid (when given), logs in as `uid`
+ * unless `isLogin` is false, resolves every room to `roomId`, and records each POST. The silent list holds `silent`;
+ * every other POST succeeds.
  */
 export function fakeBilibili(options: {
   token?: string
   blob?: string
   uid: number
   uname: string
+  isLogin?: boolean
   roomId?: number
   silent?: { tuid: number; tname: string }[]
 }) {
@@ -56,7 +58,9 @@ export function fakeBilibili(options: {
   const fetch: FetchLike = async (url, init) => {
     if (uuid && url.includes(`/get/${uuid}`)) return Response.json({ encrypted: options.blob })
     if (url.includes('/x/web-interface/nav')) {
-      return Response.json({ code: 0, data: { isLogin: true, mid: options.uid, uname: options.uname } })
+      return options.isLogin === false
+        ? Response.json({ code: -101, message: '账号未登录', data: { isLogin: false } })
+        : Response.json({ code: 0, data: { isLogin: true, mid: options.uid, uname: options.uname } })
     }
     if (url.includes('room_init')) {
       return Response.json({ code: 0, data: { room_id: options.roomId ?? 1, short_id: 0, uid: 1 } })

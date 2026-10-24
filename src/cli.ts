@@ -152,6 +152,9 @@ const COMMAND_OPTIONS = {
 
 type Values = Record<string, string | boolean | string[] | undefined>
 
+/** Not in DEFAULT_CONFIG, so in-process callers such as tests never pick up a real saved login */
+const CLI_DEFAULTS: ConfigLayer = { loginFile: 'data/bilibili-login.json' }
+
 /** Local-time parse that accepts `2026-10-20`, `2026-10-20 20:00` and full ISO strings. */
 export function parseTime(value: string, label: string): number {
   let text = value.trim().replace(' ', 'T')
@@ -228,7 +231,7 @@ export function configFromFlags(values: Values): ConfigLayer {
 async function loadConfig(values: Values): Promise<RinneganConfig> {
   const path = str(values, 'config')
   const file = await configFromFile(path ?? 'rinnegan.config.json', path !== undefined)
-  const config = mergeConfig(DEFAULT_CONFIG, file, configFromEnv(), configFromFlags(values))
+  const config = mergeConfig(DEFAULT_CONFIG, CLI_DEFAULTS, file, configFromEnv(), configFromFlags(values))
   validateConfig(config)
   return config
 }

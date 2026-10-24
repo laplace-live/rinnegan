@@ -1,8 +1,9 @@
-import type { NavInfo, QRLogin } from '@/bilibili'
+import type { QRLogin } from '@/bilibili'
 import type { RinneganConfig } from '@/config'
 import type { FetchLike } from '@/util/fetch'
 
 import { BilibiliClient, credentialsFromQRLogin, loginWithQRCode, saveQRLogin } from '@/bilibili'
+import { resolveLogin } from '@/commands/session'
 import { fail, log, stdoutHasColors, style, warn } from '@/util/console'
 import { errorMessage } from '@/util/guards'
 import { renderQRCode } from '@/util/qr'
@@ -19,6 +20,10 @@ export interface LoginOptions {
 /** Log in by scanning a QR code in the Bilibili app and save the cookies to `config.loginFile`. Returns the exit code. */
 export async function runLogin(options: LoginOptions): Promise<number> {
   const { config } = options
+  if (!config.loginFile) {
+    fail('请用 --login-file 指定扫码登录的保存位置')
+    return 2
+  }
   log(style.bold(`LAPLACE Rinnegan 輪廻眼 ${VERSION} · 扫码登录`))
   let login: QRLogin
   try {
@@ -39,13 +44,11 @@ export async function runLogin(options: LoginOptions): Promise<number> {
 
   const credentials = credentialsFromQRLogin(login.credentials)
   const client = new BilibiliClient({ credentials: () => credentials, fetch: options.fetch })
-  let nav: NavInfo | null = null
-  try {
-    nav = await client.nav()
-  } catch (error) {
+  const nav = await client.nav().catch((error: unknown) => {
     // The cookies come straight from Bilibili's login, so a failed check doesn't discard them
     warn(`无法确认登录状态：${errorMessage(error)}`)
-  }
+    return null
+  })
   if (nav && !nav.isLogin) {
     fail('扫码登录失败：B 站没有接受这次登录的 Cookie，请重试')
     return 1
@@ -57,8 +60,8 @@ export async function runLogin(options: LoginOptions): Promise<number> {
     fail(`无法保存扫码登录到 ${config.loginFile}：${errorMessage(error)}`)
     return 1
   }
-  const saved = `已保存到 ${config.loginFile}`
-  log(nav ? `登录账号 ${nav.uname}（${nav.uid}）· ${saved}` : `登录账号 UID ${credentials.uid} · ${saved}`)
-  if (config.loginSync.token) warn('已配置 LOGIN_SYNC_TOKEN，live / bans / unban 仍会优先使用 Login Sync')
+  log(`登录账号 ${nav?.uname ?? 'UID'}（${credentials.uid}）· 已保存到 ${config.loginFile}`)
+  const active = await resolveLogin(config)
+  if (active && active.method !== 'qr') warn(`live / bans / unban 仍会优先使用 ${active.label}`)
   return 0
 }

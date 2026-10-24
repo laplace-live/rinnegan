@@ -19,10 +19,4 @@ export {
   normalizeReason,
 } from '@/bilibili/client'
 export { CredentialProvider, credentialSummary, credentialsFromPayload, loadCredentials } from '@/bilibili/credentials'
-export {
-  credentialsFromQRLogin,
-  loadQRLogin,
-  loginWithQRCode,
-  QRLoginProvider,
-  saveQRLogin,
-} from '@/bilibili/qr-login'
+export { credentialsFromQRLogin, loadQRLogin, loginWithQRCode, saveQRLogin } from '@/bilibili/qr-login'

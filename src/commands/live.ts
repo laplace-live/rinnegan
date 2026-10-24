@@ -7,7 +7,7 @@ import type { FetchLike } from '@/util/fetch'
 import { createReviewer, describeAiGap, resolveAiConfig } from '@/ai'
 import { AuditLog } from '@/audit/audit'
 import { BilibiliClient } from '@/bilibili'
-import { connectBilibili, LOGIN_METHOD_LABELS, loginMethod, openStore } from '@/commands/session'
+import { connectBilibili, NO_LOGIN, openStore, resolveLogin } from '@/commands/session'
 import { Detector } from '@/detect/detector'
 import { clip, escapeInvisible } from '@/detect/normalize'
 import { Enforcer } from '@/enforce/enforcer'
@@ -71,35 +71,33 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
 
   log(style.bold(`LAPLACE Rinnegan 輪廻眼 ${VERSION} · 实时模式`))
 
-  const method = await loginMethod(config)
+  const login = await resolveLogin(config, options.fetch)
   let dryRunReason: string | null = null
   if (config.ban.dryRun) dryRunReason = '已指定 --dry-run'
-  else if (!method) dryRunReason = '未提供 LOGIN_SYNC_TOKEN，也未扫码登录'
+  else if (!login) dryRunReason = NO_LOGIN
 
   // Independent of each other, so started together; reported in a fixed order once all have settled.
   const anonymous = new BilibiliClient({
     credentials: () => ({ cookie: '', csrf: '', uid: null }),
     fetch: options.fetch,
   })
-  const [login, resolved, store] = await Promise.all([
-    method
-      ? connectBilibili(config, method, options.fetch, audit).catch((error: unknown) => new Error(errorMessage(error)))
+  const [session, resolved, store] = await Promise.all([
+    login
+      ? connectBilibili(login, options.fetch, audit).catch((error: unknown) => new Error(errorMessage(error)))
       : null,
     Promise.allSettled(config.live.rooms.map(room => anonymous.resolveRoom(room))),
     dryRunReason ? new MemoryBanStore() : openStore(config, fail),
   ])
-  if (login instanceof Error) {
-    fail(login.message)
-    audit.write('session-error', { error: login.message })
+  if (session instanceof Error) {
+    fail(session.message)
+    audit.write('session-error', { error: session.message })
     await store?.close().catch(() => undefined)
     return null
   }
-  const client = login?.client ?? null
-  const operatorUid = login?.nav.uid ?? null
-  const operatorName = login?.nav.uname ?? null
-  if (login) {
-    log(`登录账号 ${operatorName}（${operatorUid}）· ${LOGIN_METHOD_LABELS[login.method]} · ${login.cookies} 个 Cookie`)
-  }
+  const client = session?.client ?? null
+  const operatorUid = session?.nav.uid ?? null
+  const operatorName = session?.nav.uname ?? null
+  if (login && session) log(`登录账号 ${operatorName}（${operatorUid}）· ${login.label} · ${session.cookies} 个 Cookie`)
 
   const rooms = config.live.rooms.map((room, index) => {
     const result = resolved[index]
@@ -168,7 +166,7 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
     dryRunReason,
     operatorUid,
     operatorName,
-    login: method,
+    login: login?.method ?? null,
     source: sourceUrl,
     rooms,
     store: dryRunReason ? 'memory' : describeStoreUrl(config.storeUrl),

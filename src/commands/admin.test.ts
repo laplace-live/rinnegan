@@ -69,7 +69,7 @@ describe('admin commands', () => {
 
   test('unban needs targets and refuses to run without a login', async () => {
     dir = mkdtempSync(join(tmpdir(), 'rinnegan-admin-'))
-    const config = mergeConfig(DEFAULT_CONFIG, { logDir: dir, storeUrl: 'memory:', loginFile: join(dir, 'login.json') })
+    const config = mergeConfig(DEFAULT_CONFIG, { logDir: dir, storeUrl: 'memory:' })
     const base = { config, room: ROOM, session: null, reason: 'x', dryRun: false }
     expect(await runUnban({ ...base, uids: [] })).toBe(1)
     expect(await runUnban({ ...base, uids: [5] })).toBe(1)

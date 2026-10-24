@@ -51,6 +51,19 @@ describe('rinnegan CLI', () => {
     expect(missing.err).toContain('找不到归档文件')
   })
 
+  test('looks for a saved QR login in data/bilibili-login.json', async () => {
+    const none = await cli('bans', '--room', '1', '--remote')
+    expect(none.code).toBe(1)
+    expect(none.err).toContain('未提供 LOGIN_SYNC_TOKEN，也未扫码登录（rinnegan login），无法访问禁言接口')
+    // Damaged, so it fails before any request
+    const path = join(dir, 'data', 'bilibili-login.json')
+    await Bun.write(path, '{}')
+    const damaged = await cli('bans', '--room', '1', '--remote')
+    rmSync(path)
+    expect(damaged.code).toBe(1)
+    expect(damaged.err).toContain('无法登录 B 站：扫码登录 data/bilibili-login.json 已损坏')
+  })
+
   test('offline ranks an injected loop and writes reports', async () => {
     const messages = simulateChatterboxLoop({
       persona: { uid: 4242, uname: 'loop-bot', roomId: 1 },

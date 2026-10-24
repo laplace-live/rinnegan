@@ -23,11 +23,13 @@ export interface LoadCredentialsOptions {
   signal?: AbortSignal
 }
 
-/** {@link LoadCredentialsOptions} plus caching; each pull gets its own timeout instead of a signal. */
-export interface CredentialProviderOptions extends Omit<LoadCredentialsOptions, 'signal'> {
-  /** How long a pull is reused, ms */
+/** Where {@link CredentialProvider} loads credentials from, and how long it keeps them. */
+export interface CredentialProviderOptions {
+  /** Fresh credentials, e.g. from {@link loadCredentials}; `signal` times the load out */
+  load: (signal: AbortSignal) => Promise<BilibiliCredentials>
+  /** How long a load is reused, ms */
   ttlMs?: number
-  /** Per pull, ms */
+  /** Per load, ms */
   timeoutMs?: number
   /** Called when a refresh fails and the previous credentials are served instead */
   onStale?: (error: unknown) => void
@@ -43,7 +45,7 @@ export interface CredentialSummary {
 }
 
 const DEFAULT_TTL_MS = 30 * 60_000
-const DEFAULT_PULL_TIMEOUT_MS = 10_000
+const DEFAULT_LOAD_TIMEOUT_MS = 10_000
 const STALE_RETRY_MS = 60_000
 const REQUIRED_COOKIES = ['SESSDATA', 'bili_jct'] as const
 
@@ -122,29 +124,29 @@ export function credentialSummary(credentials: BilibiliCredentials): CredentialS
 }
 
 /**
- * Login-sync credentials cached for `ttlMs` (30 min by default); hand `() => provider.get()` to the client. A failed
+ * Credentials from `load`, cached for `ttlMs` (30 min by default); hand `() => provider.get()` to the client. A failed
  * refresh keeps serving the previous credentials, retrying a minute later, until `invalidate()` drops them.
  */
 export class CredentialProvider {
-  readonly #load: Omit<LoadCredentialsOptions, 'signal'>
+  readonly #load: CredentialProviderOptions['load']
   readonly #ttlMs: number
   readonly #timeoutMs: number
   readonly #onStale: ((error: unknown) => void) | undefined
   #value: BilibiliCredentials | null = null
   #expiresAt = 0
   #pending: Promise<BilibiliCredentials> | null = null
-  /** Bumped by `invalidate()` so pulls started earlier can't repopulate the cache */
+  /** Bumped by `invalidate()` so loads started earlier can't repopulate the cache */
   #generation = 0
 
   constructor(options: CredentialProviderOptions) {
-    const { ttlMs = DEFAULT_TTL_MS, timeoutMs = DEFAULT_PULL_TIMEOUT_MS, onStale, ...load } = options
+    const { load, ttlMs = DEFAULT_TTL_MS, timeoutMs = DEFAULT_LOAD_TIMEOUT_MS, onStale } = options
     this.#load = load
     this.#ttlMs = ttlMs
     this.#timeoutMs = timeoutMs
     this.#onStale = onStale
   }
 
-  /** Cached credentials, pulled again once the TTL lapses or after `invalidate()`; concurrent calls share a pull. */
+  /** Cached credentials, loaded again once the TTL lapses or after `invalidate()`; concurrent calls share a load. */
   get(): Promise<BilibiliCredentials> {
     if (this.#value && Date.now() < this.#expiresAt) return Promise.resolve(this.#value)
     if (!this.#pending) {
@@ -158,7 +160,7 @@ export class CredentialProvider {
     return this.#pending
   }
 
-  /** Forget the cached credentials, e.g. after Bilibili rejected them; the next `get()` pulls again. */
+  /** Forget the cached credentials, e.g. after Bilibili rejected them; the next `get()` loads again. */
   invalidate(): void {
     this.#generation++
     this.#value = null
@@ -168,7 +170,7 @@ export class CredentialProvider {
 
   async #refresh(generation: number): Promise<BilibiliCredentials> {
     try {
-      const value = await loadCredentials({ ...this.#load, signal: AbortSignal.timeout(this.#timeoutMs) })
+      const value = await this.#load(AbortSignal.timeout(this.#timeoutMs))
       if (generation === this.#generation) {
         this.#value = value
         this.#expiresAt = Date.now() + this.#ttlMs
