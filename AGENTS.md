@@ -36,9 +36,14 @@ bun run lint        # biome check
 bun run typecheck   # bun check
 bun test
 bun run src/cli.ts offline references/<file>.lca
+bun run build       # dist/cli.js, the bundle npm ships; prepack runs it
 ```
 
 Always run `bun run lint`, `bun run typecheck` and `bun test` before finishing.
+
+Published to npm as `@laplace.live/rinnegan` (`bunx @laplace.live/rinnegan`). The bundle inlines LAPLACE's own
+packages, so they are devDependencies; a third-party runtime package goes in `dependencies` and in `build`'s
+`--external` list, so its license ships with it. Keep `engines.bun` at the oldest Bun that passes `bun test`.
 
 ## Runtime
 

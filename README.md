@@ -11,14 +11,15 @@ official room silent-user API.
   other tools can build on — e.g. lift a ban once the user spends ¥30 in the room.
 
 ```bash
-bun install
-bun run src/cli.ts offline references/archive.lca
-bun run src/cli.ts live --url ws://localhost:8080 --room 25034104          # dry run
-LOGIN_SYNC_TOKEN='uuid@password' bun run src/cli.ts live --url ws://localhost:8080 --room 25034104
-bun run src/cli.ts login                                                   # or log in by QR code instead
+bunx @laplace.live/rinnegan offline archive.lca
+bunx @laplace.live/rinnegan live --url ws://localhost:8080 --room 25034104          # dry run
+LOGIN_SYNC_TOKEN='uuid@password' bunx @laplace.live/rinnegan live --url ws://localhost:8080 --room 25034104
+bunx @laplace.live/rinnegan login                                                   # or log in by QR code instead
 ```
 
-`bun run build` compiles a standalone `dist/rinnegan` binary.
+Rinnegan runs on [Bun](https://bun.sh) ≥ 1.3.7. `pnpx` and `npx` work too while `bun` is on your `PATH`, and
+`bun add -g @laplace.live/rinnegan` installs the `rinnegan` command used below. Config, logins, logs and reports are
+relative to the current directory.
 
 ## How it detects
 
@@ -78,7 +79,7 @@ Timing thresholds come from bootstrapping real human send gaps (200k resamples),
 ## Live mode
 
 ```bash
-bun run src/cli.ts live --url ws://lef.example:8080 --token "$BRIDGE_TOKEN" --room 25034104
+rinnegan live --url ws://lef.example:8080 --token "$BRIDGE_TOKEN" --room 25034104
 ```
 
 - `--url` points at LAPLACE Event Fetcher with `BRIDGE_MODE=1` (`ws://host:8080`) or Event Bridge (`ws://localhost:9696`).
@@ -99,7 +100,7 @@ bun run src/cli.ts live --url ws://lef.example:8080 --token "$BRIDGE_TOKEN" --ro
 - **LAPLACE Login Sync**: `LOGIN_SYNC_TOKEN` (or `--login-sync-token`) is the `uuid@password` the extension shows.
   The cookies are pulled again every 30 minutes (`loginSync.refreshMinutes`) and whenever Bilibili rejects them, so
   they follow the browser's login.
-- **QR code**: `bun run src/cli.ts login` draws a code in the terminal; scan it with the Bilibili app and confirm. The
+- **QR code**: `rinnegan login` draws a code in the terminal; scan it with the Bilibili app and confirm. The
   cookies are saved to `data/bilibili-login.json` (`--login-file`, `RINNEGAN_LOGIN_FILE`), readable by its owner
   only. On Windows the file takes its folder's permissions instead, so keep it in a folder only you can read. To log
   out, stop any running `live` and delete the file; the session stays valid on Bilibili's side until it expires.
@@ -139,15 +140,15 @@ only acts on bans past `expiresAt` can set `tickScope: 'due'`; when every rule d
 ### Admin commands
 
 ```bash
-bun run src/cli.ts bans --room 25034104                    # Bilibili's silent list + Rinnegan's records
-bun run src/cli.ts unban --room 25034104 --uid 123 --uid 456
-bun run src/cli.ts unban --session <audit session id>      # revert every real ban of one live run
+rinnegan bans --room 25034104                    # Bilibili's silent list + Rinnegan's records
+rinnegan unban --room 25034104 --uid 123 --uid 456
+rinnegan unban --session <audit session id>      # revert every real ban of one live run
 ```
 
 ## Offline mode
 
 ```bash
-bun run src/cli.ts offline a.lca b.lca --room 25034104 --since '2026-10-20 20:00' --top 50
+rinnegan offline a.lca b.lca --room 25034104 --since '2026-10-20 20:00' --top 50
 ```
 
 Accepts gzip and zstd `.lca` archives and raw JSON exports; pre-2026 lz-string archives must be re-exported from a
@@ -158,7 +159,7 @@ are local; set `TZ=Asia/Shanghai` for Beijing time.
 ## Configuration
 
 Precedence: defaults < `rinnegan.config.json` (or `--config`) < environment < flags. See
-[`rinnegan.config.example.json`](rinnegan.config.example.json) and `bun run src/cli.ts --help`.
+[`rinnegan.config.example.json`](rinnegan.config.example.json) and `rinnegan --help`.
 
 | Variable                                                                                                                                                    | Purpose                         |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
@@ -177,7 +178,11 @@ Precedence: defaults < `rinnegan.config.json` (or `--config`) < environment < fl
 ## Development
 
 ```bash
+bun install
+bun run src/cli.ts offline references/archive.lca   # run from source
 bun run lint && bun run typecheck && bun test
+bun run build                                        # dist/cli.js, the bundle npm ships (built on pack/publish)
+bun run compile                                      # standalone dist/rinnegan binary
 ```
 
 Tests that use real archives in `references/` skip when the files are absent. Postgres and Redis store tests run when
