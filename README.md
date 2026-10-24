@@ -1,3 +1,5 @@
+<img width="128" height="128" alt="logo-hexa-rinnegan-512" src="https://github.com/user-attachments/assets/28fdb8d6-373c-4119-a1a7-9c8578a805e4" />
+
 # LAPLACE Rinnegan 輪廻眼
 
 Detects **独轮车** — one viewer looping the same (or nearly the same) danmaku, usually through a tool such as
