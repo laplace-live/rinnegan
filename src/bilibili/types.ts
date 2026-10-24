@@ -1,4 +1,4 @@
-/** Cookies for Bilibili web APIs, resolved from LAPLACE Login Sync. */
+/** Cookies for Bilibili web APIs, from LAPLACE Login Sync or a QR login. */
 export interface BilibiliCredentials {
   /** `Cookie` header value */
   cookie: string

@@ -50,7 +50,7 @@ export interface LiveConfig {
 }
 
 export interface LoginSyncConfig {
-  /** `uuid@password` from the LAPLACE Login Sync extension; empty means dry-run */
+  /** `uuid@password` from the LAPLACE Login Sync extension; empty falls back to the QR login, then dry-run */
   token: string
   /** Empty for the SDK's public server */
   baseURL: string
@@ -65,6 +65,8 @@ export interface RinneganConfig {
   detector: Partial<DetectorOptions>
   live: LiveConfig
   loginSync: LoginSyncConfig
+  /** Where `rinnegan login` saves a QR login, used when there's no Login Sync token */
+  loginFile: string
   ban: BanConfig
   /** `sqlite:<path>`, `memory:`, `postgres://…` or `redis://…` */
   storeUrl: string
@@ -90,6 +92,7 @@ export const DEFAULT_CONFIG: RinneganConfig = {
     authKey: '',
     refreshMinutes: 30,
   },
+  loginFile: 'data/bilibili-login.json',
   ban: {
     dryRun: false,
     patterns: ['loop', 'burst', 'template', 'blend'],
@@ -114,6 +117,7 @@ export type ConfigLayer = {
   detector?: Partial<DetectorOptions>
   live?: Partial<LiveConfig>
   loginSync?: Partial<LoginSyncConfig>
+  loginFile?: string
   ban?: Partial<BanConfig>
   storeUrl?: string
   unbanSpendCny?: number
@@ -175,6 +179,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
     logDir: get('RINNEGAN_LOG_DIR'),
     reportDir: get('RINNEGAN_REPORT_DIR'),
     storeUrl: get('RINNEGAN_STORE_URL'),
+    loginFile: get('RINNEGAN_LOGIN_FILE'),
     live: defined({
       url: get('RINNEGAN_EVENT_URL'),
       token: get('RINNEGAN_EVENT_TOKEN'),
@@ -224,6 +229,7 @@ export function mergeConfig(base: RinneganConfig, ...layers: ConfigLayer[]): Rin
     if (layer.logDir !== undefined) out.logDir = layer.logDir
     if (layer.reportDir !== undefined) out.reportDir = layer.reportDir
     if (layer.storeUrl !== undefined) out.storeUrl = layer.storeUrl
+    if (layer.loginFile !== undefined) out.loginFile = layer.loginFile
     if (layer.unbanSpendCny !== undefined) out.unbanSpendCny = layer.unbanSpendCny
     if (layer.detector) out.detector = { ...out.detector, ...layer.detector }
     if (layer.live) out.live = { ...out.live, ...layer.live }

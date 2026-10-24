@@ -26,6 +26,7 @@ const HELP = `LAPLACE Rinnegan 輪廻眼 ${VERSION} — 识别并处置 B 站直
   rinnegan live [选项]                     连接 LAPLACE Event Fetcher / Event Bridge 实时检测并封禁
   rinnegan bans --room <id> [选项]         查看房间禁言列表与 Rinnegan 封禁记录
   rinnegan unban --room <id> --uid <uid>   解除禁言；--session <id> 撤销某次运行的全部封禁
+  rinnegan login [--login-file <path>]     用哔哩哔哩 App 扫码登录，供 live / bans / unban 使用
 
 通用选项
   -c, --config <file>       JSON 配置文件（默认读取 ./rinnegan.config.json）
@@ -50,8 +51,9 @@ offline
 live
   -u, --url <ws>            事件源地址，默认 ws://localhost:9696（LEF 桥接模式通常为 ws://host:8080）
   -t, --token <token>       事件源令牌（LEF 的 BRIDGE_TOKEN / LEB 的 --auth）
-      --login-sync-token <uuid@password>   LAPLACE Login Sync 令牌；不提供时自动进入演练模式
+      --login-sync-token <uuid@password>   LAPLACE Login Sync 令牌，优先于扫码登录；两者都没有时自动进入演练模式
       --login-sync-url <url>               Login Sync 服务器，默认 https://login-sync.laplace.cn
+      --login-file <path>                  扫码登录的保存位置，默认 data/bilibili-login.json
       --dry-run             只检测、不封禁
       --store <url>         封禁记录：sqlite:<path>（默认 sqlite:data/rinnegan.sqlite）、postgres://…、redis://…、memory:
       --patterns <list>     可封禁的模式：loop,burst,template,blend（默认全部，flood 永不封禁）
@@ -82,9 +84,9 @@ unban
       --dry-run             只列出不执行
 
 环境变量
-  LOGIN_SYNC_TOKEN  LOGIN_SYNC_URL  LOGIN_SYNC_AUTH_KEY  RINNEGAN_EVENT_URL  RINNEGAN_EVENT_TOKEN  RINNEGAN_ROOMS
-  RINNEGAN_STORE_URL  RINNEGAN_LOG_DIR  RINNEGAN_REPORT_DIR  RINNEGAN_AI_MODE  RINNEGAN_AI_PROVIDER  RINNEGAN_AI_PROTOCOL
-  RINNEGAN_AI_BASE  RINNEGAN_AI_API_KEY  RINNEGAN_AI_MODEL  RINNEGAN_AI_THRESHOLD`
+  LOGIN_SYNC_TOKEN  LOGIN_SYNC_URL  LOGIN_SYNC_AUTH_KEY  RINNEGAN_LOGIN_FILE  RINNEGAN_EVENT_URL  RINNEGAN_EVENT_TOKEN
+  RINNEGAN_ROOMS  RINNEGAN_STORE_URL  RINNEGAN_LOG_DIR  RINNEGAN_REPORT_DIR  RINNEGAN_AI_MODE  RINNEGAN_AI_PROVIDER
+  RINNEGAN_AI_PROTOCOL  RINNEGAN_AI_BASE  RINNEGAN_AI_API_KEY  RINNEGAN_AI_MODEL  RINNEGAN_AI_THRESHOLD`
 
 const COMMON = {
   config: { type: 'string', short: 'c' },
@@ -96,6 +98,7 @@ const COMMON = {
   'log-dir': { type: 'string' },
   'login-sync-token': { type: 'string' },
   'login-sync-url': { type: 'string' },
+  'login-file': { type: 'string' },
   store: { type: 'string' },
   help: { type: 'boolean', short: 'h' },
 } as const
@@ -144,6 +147,7 @@ const COMMAND_OPTIONS = {
     reason: { type: 'string' },
     'dry-run': { type: 'boolean' },
   },
+  login: {},
 } as const
 
 type Values = Record<string, string | boolean | string[] | undefined>
@@ -188,6 +192,7 @@ export function configFromFlags(values: Values): ConfigLayer {
     logDir: text('log-dir'),
     reportDir: text('report-dir'),
     storeUrl: text('store'),
+    loginFile: text('login-file'),
     unbanSpendCny: number('unban-spend'),
     detector: defined({
       windowMs: windowMinutes === undefined ? undefined : windowMinutes * 60_000,
@@ -312,6 +317,10 @@ async function main(argv: string[]): Promise<number> {
         reason: str(values, 'reason') ?? '手动解除',
         dryRun: values['dry-run'] === true,
       })
+    }
+    case 'login': {
+      const { runLogin } = await import('@/commands/login')
+      return runLogin({ config })
     }
   }
 }

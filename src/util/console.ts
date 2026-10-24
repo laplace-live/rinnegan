@@ -16,6 +16,11 @@ export const style = {
   gray: styled('gray'),
 }
 
+/** Whether {@link style} colors stdout. */
+export function stdoutHasColors(): boolean {
+  return style.bold('x') !== 'x'
+}
+
 const warning = styled('yellow', process.stderr)
 const failure = styled('red', process.stderr)
 

@@ -20,9 +20,11 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@laplace.live/bilibili-qr": "^0.1.0",
     "@laplace.live/event-bridge-sdk": "^1.2.2",
     "@laplace.live/event-types": "^2.0.21",
-    "@laplace.live/login-sync": "^1.2.1"
+    "@laplace.live/login-sync": "^1.2.1",
+    "uqr": "^0.1.3"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.2",

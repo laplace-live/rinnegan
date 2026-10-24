@@ -21,9 +21,14 @@ describe('AuditLog', () => {
 
   test('never writes secrets', async () => {
     const audit = new AuditLog({ dir, mode: 'live', now: () => new Date(2026, 9, 22).getTime() })
-    audit.write('session-start', { loginSync: { token: 'uuid@pw' }, cookie: 'SESSDATA=x', nested: [{ csrf: 'y' }] })
+    audit.write('session-start', {
+      loginSync: { token: 'uuid@pw' },
+      cookie: 'SESSDATA=x',
+      nested: [{ csrf: 'y', refreshToken: 'rt-secret' }],
+    })
     const text = await Bun.file(audit.path).text()
     expect(text).not.toContain('uuid@pw')
+    expect(text).not.toContain('rt-secret')
     expect(text).not.toContain('SESSDATA')
     expect(text).toContain('[redacted]')
   })

@@ -50,25 +50,34 @@ describe('config layers', () => {
       RINNEGAN_AI_MODE: 'confirm',
       RINNEGAN_AI_API_KEY: 'sk-test',
       RINNEGAN_STORE_URL: 'memory:',
+      RINNEGAN_LOGIN_FILE: 'secrets/login.json',
       UNRELATED: 'x',
     })
     expect(layer.loginSync?.token).toBe('abc@pw')
     expect(layer.live).toEqual({ url: 'ws://lef:8080', rooms: [25034104] })
     expect(layer.ai).toEqual({ mode: 'confirm', apiKey: 'sk-test' })
     expect(layer.storeUrl).toBe('memory:')
+    expect(layer.loginFile).toBe('secrets/login.json')
     expect(configFromEnv({ UNRELATED: 'x', LOGIN_SYNC_TOKEN: ' ' })).toEqual({})
   })
 
   test('flags override file and env, nested sections merge', () => {
-    const file = { ban: { exemptGuards: true, maxPerMinute: 2 }, live: { url: 'ws://file:1' } }
+    const file = { ban: { exemptGuards: true, maxPerMinute: 2 }, live: { url: 'ws://file:1' }, loginFile: 'file.json' }
     const env = configFromEnv({ RINNEGAN_EVENT_URL: 'ws://env:2', LOGIN_SYNC_TOKEN: 'a@b' })
-    const flags = configFromFlags({ url: 'ws://flag:3', room: ['1,2', '3'], window: '5', 'dry-run': true })
+    const flags = configFromFlags({
+      url: 'ws://flag:3',
+      room: ['1,2', '3'],
+      window: '5',
+      'dry-run': true,
+      'login-file': 'flag.json',
+    })
     const config = mergeConfig(DEFAULT_CONFIG, file, env, flags)
     expect(config.live.url).toBe('ws://flag:3')
     expect(config.live.rooms).toEqual([1, 2, 3])
     expect(config.detector.windowMs).toBe(300_000)
     expect(config.ban).toMatchObject({ dryRun: true, exemptGuards: true, maxPerMinute: 2, hours: -1 })
     expect(config.loginSync.token).toBe('a@b')
+    expect(config.loginFile).toBe('flag.json')
     expect(DEFAULT_CONFIG.ban.dryRun).toBe(false)
   })
 

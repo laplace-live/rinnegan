@@ -40,21 +40,21 @@ export function moderatorBlob(token: string, csrf: string, uid: number): Promise
 }
 
 /**
- * `fetch` for a fake login-sync server and Bilibili: serves `blob` for `token`'s uuid, logs in as `uid`, resolves every
- * room to `roomId`, and records each POST. The silent list holds `silent`; every other POST succeeds.
+ * `fetch` for a fake login-sync server and Bilibili: serves `blob` for `token`'s uuid (when given), logs in as `uid`,
+ * resolves every room to `roomId`, and records each POST. The silent list holds `silent`; every other POST succeeds.
  */
 export function fakeBilibili(options: {
-  token: string
-  blob: string
+  token?: string
+  blob?: string
   uid: number
   uname: string
   roomId?: number
   silent?: { tuid: number; tname: string }[]
 }) {
-  const uuid = parseToken(options.token).uuid
+  const uuid = options.token ? parseToken(options.token).uuid : null
   const posts: { url: string; body: string }[] = []
   const fetch: FetchLike = async (url, init) => {
-    if (url.includes(`/get/${uuid}`)) return Response.json({ encrypted: options.blob })
+    if (uuid && url.includes(`/get/${uuid}`)) return Response.json({ encrypted: options.blob })
     if (url.includes('/x/web-interface/nav')) {
       return Response.json({ code: 0, data: { isLogin: true, mid: options.uid, uname: options.uname } })
     }

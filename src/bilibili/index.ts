@@ -1,5 +1,6 @@
 export type { BilibiliClientOptions, SilentUserPage } from '@/bilibili/client'
 export type { CredentialProviderOptions, CredentialSummary, LoadCredentialsOptions } from '@/bilibili/credentials'
+export type { QRLogin, QRLoginFlowOptions } from '@/bilibili/qr-login'
 export type { ApiResult, BilibiliCredentials, NavInfo, RoomInfo, SilentUser } from '@/bilibili/types'
 export type { FetchLike } from '@/util/fetch'
 
@@ -18,3 +19,10 @@ export {
   normalizeReason,
 } from '@/bilibili/client'
 export { CredentialProvider, credentialSummary, credentialsFromPayload, loadCredentials } from '@/bilibili/credentials'
+export {
+  credentialsFromQRLogin,
+  loadQRLogin,
+  loginWithQRCode,
+  QRLoginProvider,
+  saveQRLogin,
+} from '@/bilibili/qr-login'

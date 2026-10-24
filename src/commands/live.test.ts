@@ -7,11 +7,13 @@ import type { LiveSession } from '@/commands/live'
 import type { ChatMessage } from '@/types'
 
 import { readAuditEntries } from '@/audit/audit'
+import { saveQRLogin } from '@/bilibili'
 import { startLive } from '@/commands/live'
 import { DEFAULT_CONFIG, mergeConfig } from '@/config'
 import { messageEvent } from '@/testing/events'
 import { type FakeBridge, startFakeBridge } from '@/testing/fake-bridge'
 import { fakeBilibili, moderatorBlob } from '@/testing/login-sync'
+import { qrLogin } from '@/testing/qr-login'
 import { mergeStreams, simulateChatterboxLoop, simulateHumanChat } from '@/testing/simulate'
 import { until } from '@/testing/wait'
 
@@ -55,6 +57,7 @@ describe('live mode end to end', () => {
       logDir: dir,
       live: { url: bridge.url, rooms: [ROOM] },
       loginSync: { token: '' },
+      loginFile: join(dir, 'login.json'),
     })
     session = await startLive({
       config,
@@ -73,9 +76,13 @@ describe('live mode end to end', () => {
     await until(async () => (await readAuditEntries(audit?.path ?? '')).some(entry => entry.event === 'ban'))
     const entries = await readAuditEntries(audit?.path ?? '')
     const ban = entries.find(entry => entry.event === 'ban')
-    expect(ban).toMatchObject({ uid: 4242, dryRun: true, dryRunReason: '未提供 LOGIN_SYNC_TOKEN' })
+    expect(ban).toMatchObject({ uid: 4242, dryRun: true, dryRunReason: '未提供 LOGIN_SYNC_TOKEN，也未扫码登录' })
     expect(String(ban?.reason)).toContain('关注主播谢谢喵')
-    expect(entries.find(entry => entry.event === 'session-start')).toMatchObject({ dryRun: true, rooms: [ROOM] })
+    expect(entries.find(entry => entry.event === 'session-start')).toMatchObject({
+      dryRun: true,
+      login: null,
+      rooms: [ROOM],
+    })
     expect(entries.some(entry => entry.event === 'detection' && entry.uid === 7 && entry.verdict === 'spam')).toBe(
       false
     )
@@ -111,4 +118,27 @@ describe('live mode end to end', () => {
     expect(JSON.stringify(entries)).not.toContain('csrf123')
     expect(session?.enforcer.stats.banned).toBe(1)
   }, 20_000)
+
+  test('a saved QR login takes live mode out of dry run', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'rinnegan-live-'))
+    bridge = startFakeBridge()
+    const loginFile = join(dir, 'login.json')
+    await saveQRLogin(loginFile, qrLogin())
+    const { fetch, posts } = fakeBilibili({ uid: 9, uname: '主播', roomId: ROOM })
+    const config = mergeConfig(DEFAULT_CONFIG, {
+      logDir: dir,
+      storeUrl: 'memory:',
+      live: { url: bridge.url, rooms: [ROOM] },
+      loginFile,
+    })
+    session = await startLive({ config, verbose: false, statusEvery: 0, fetch })
+    const path = session?.audit.path ?? ''
+    await until(async () => (await readAuditEntries(path)).some(entry => entry.event === 'room-ready'))
+    expect((await readAuditEntries(path)).find(entry => entry.event === 'session-start')).toMatchObject({
+      dryRun: false,
+      login: 'qr',
+      operatorUid: 9,
+    })
+    expect(posts.map(post => post.body)).toEqual([`room_id=${ROOM}&ps=1&csrf_token=qrcsrf&csrf=qrcsrf&visit_id=`])
+  })
 })

@@ -36,6 +36,8 @@ describe('rinnegan CLI', () => {
     expect(help.code).toBe(0)
     expect(help.out).toContain('rinnegan offline')
     expect(help.out).toContain('--login-sync-token')
+    expect(help.out).toContain('rinnegan login')
+    expect(help.out).toContain('--login-file')
     const version = await cli('--version')
     expect(version.out.trim()).toMatch(/^\d+\.\d+\.\d+$/)
   })
