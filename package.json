@@ -22,7 +22,8 @@
     "rinnegan": "dist/cli.js"
   },
   "files": [
-    "dist/cli.js"
+    "dist/cli.js",
+    "rinnegan.config.example.json"
   ],
   "scripts": {
     "start": "bun run src/cli.ts",
