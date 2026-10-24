@@ -1,6 +1,6 @@
 {
   "name": "@laplace.live/rinnegan",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Detect 独轮车 (looped duplicate danmaku) spammers in Bilibili Live rooms, live or from LAPLACE Chat archives",
   "keywords": [
     "bilibili",
