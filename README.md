@@ -183,10 +183,40 @@ bun run src/cli.ts offline references/archive.lca   # run from source
 bun run lint && bun run typecheck && bun test
 bun run build                                        # dist/cli.js, the bundle npm ships (built on pack/publish)
 bun run compile                                      # standalone dist/rinnegan binary
+bunx changeset                                       # describe a user-facing change (see Releasing)
 ```
 
 Tests that use real archives in `references/` skip when the files are absent. Postgres and Redis store tests run when
 `RINNEGAN_TEST_DATABASE_URL` / `RINNEGAN_TEST_REDIS_URL` are set.
+
+## Releasing
+
+Versions and the changelog are managed by [Changesets](https://changesets.dev). Never bump `version` in
+`package.json`, push a release tag, or edit `CHANGELOG.md` by hand.
+
+1. Every user-facing change ships with a changeset in the same commit. Run `bunx changeset`, or add a file under
+   `.changeset/` yourself:
+
+   ```md
+   ---
+   "@laplace.live/rinnegan": minor
+   ---
+
+   feat: Log in to Bilibili by scanning a QR code
+   ```
+
+   Use `minor` for new features and substantial behavior changes, `patch` for fixes and small changes. Start the
+   summary with `feat:`, `fix:`, `perf:` or `chore:`, then one capitalized sentence written for users — the prefix is
+   stripped, and the rest lands verbatim in `CHANGELOG.md` and the GitHub Release. CI, docs, and refactors with no
+   user-visible effect need no changeset; `bunx changeset status` lists what is pending.
+2. While changesets sit on `master`, the Release workflow keeps a `chore: version packages` PR open that bumps the
+   version and updates `CHANGELOG.md`.
+3. Merging that PR publishes the new version to npm, tags it `v<version>`, and publishes the GitHub Release from the
+   new changelog entry.
+
+The Release workflow publishes through npm [trusted publishing](https://docs.npmjs.com/trusted-publishers), with no
+token, so the package's settings on npmjs.com must list GitHub Actions as a trusted publisher with repository
+`laplace-live/rinnegan` and workflow `release.yml`.
 
 ## License
 

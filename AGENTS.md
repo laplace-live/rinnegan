@@ -41,9 +41,26 @@ bun run build       # dist/cli.js, the bundle npm ships; prepack runs it
 
 Always run `bun run lint`, `bun run typecheck` and `bun test` before finishing.
 
-Published to npm as `@laplace.live/rinnegan` (`bunx @laplace.live/rinnegan`). The bundle inlines LAPLACE's own
-packages, so they are devDependencies; a third-party runtime package goes in `dependencies` and in `build`'s
-`--external` list, so its license ships with it. Keep `engines.bun` at the oldest Bun that passes `bun test`.
+Published to npm as `@laplace.live/rinnegan` (`bunx @laplace.live/rinnegan`) by the Release workflow, never by hand.
+The bundle inlines LAPLACE's own packages, so they are devDependencies; a third-party runtime package goes in
+`dependencies` and in `build`'s `--external` list, so its license ships with it. Keep `engines.bun` at the oldest Bun
+that passes `bun test`.
+
+## Shipping a change
+
+- **Every user-facing change ships with a changeset in the same commit** — add it yourself, unasked.
+
+  ```bash
+  bunx changeset add --minor @laplace.live/rinnegan -m "feat: Log in to Bilibili by scanning a QR code"
+  ```
+
+  `--minor` for new features and substantial behavior changes, `--patch` for fixes and small changes. Start the
+  summary with `feat:`/`fix:`/`perf:`/`chore:`, then **one capitalized plain sentence under ~80 chars, written for
+  users** — no rationale, no mechanism, no second line. The prefix is stripped and the rest ships verbatim in
+  `CHANGELOG.md` and the GitHub Release ([README](README.md#releasing)).
+- No changeset for CI, docs, tests, dev-only tooling, or refactors with no user-visible effect.
+- **Never bump `version` in `package.json`, push a release tag, or hand-edit `CHANGELOG.md`** — merging the Release
+  workflow's version PR does all three, then publishes to npm.
 
 ## Runtime
 

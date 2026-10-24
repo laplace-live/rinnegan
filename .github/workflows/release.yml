@@ -1,0 +1,99 @@
+name: Release
+
+# Changesets flow, as in laplace-comet: while changesets sit on master, keep a "chore: version packages" PR open
+# (version bump + CHANGELOG.md). Merging it publishes the new version to npm and tags it v<version>; github-releases
+# then publishes the GitHub Release from its CHANGELOG entry.
+
+on:
+  push:
+    branches: [master]
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: read
+  # npm trusted publishing (OIDC), which also adds provenance
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # Full history so each CHANGELOG line can link the commit that added its changeset
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # No dependency lifecycle scripts: any step of this job can mint the OIDC token npm trusts to publish.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      # `changeset publish` runs `npm publish` (whose prepack builds dist/cli.js), and trusted publishing needs
+      # npm >= 11.5.1. Upgrade the npm setup-node puts on PATH; `sudo npm` would upgrade the runner's system copy.
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Update npm
+        run: npm install -g npm@latest
+
+      # A GitHub App token, not GITHUB_TOKEN, so checks run on the version PR without manual approval. Requires the
+      # laplace-release-bot app on this repo and the `RELEASE_APP_CLIENT_ID` / `RELEASE_APP_PRIVATE_KEY` org secrets.
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Create version PR or publish to npm
+        uses: changesets/action@v2
+        with:
+          version-script: bun run version
+          # Publishes the version unless npm already has it, and tags it v<version>; the action pushes the tag.
+          publish-script: bun run release
+          # No [skip ci]: this repo also allows squash and rebase merges, which would carry it onto master and skip
+          # the publish.
+          commit-message: "chore: version packages"
+          pr-title: "chore: version packages"
+          # Releases are immutable once published, so github-releases publishes each one whole.
+          create-github-releases: false
+          # Must be passed as an input: v2 doesn't read the `GITHUB_TOKEN` env var.
+          github-token: ${{ steps.app-token.outputs.token }}
+
+  # Reconciles rather than trusting this run's publish output, so a rerun or the next push recovers a release that
+  # failed to publish.
+  github-releases:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Publish the release for the tagged version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(jq -r .version package.json)
+          tag="v$version"
+          status=0
+          git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null || status=$?
+          # 2: not tagged yet. Anything else is a failed lookup, which must not pass for "nothing to release".
+          if [ "$status" -eq 2 ]; then exit 0; fi
+          if [ "$status" -ne 0 ]; then
+            echo "::error::Could not look up $tag"
+            exit 1
+          fi
+          sh .github/scripts/changelog-section.sh CHANGELOG.md "$version" > notes.md
+          sh .github/scripts/publish-release.sh "$tag" notes.md
