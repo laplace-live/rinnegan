@@ -118,6 +118,31 @@ describe('ManualBlendIndex', () => {
     expect(index.get(ROOM, ME)).toBeNull()
   })
 
+  test('keeps every counted send, tagged, only when asked', () => {
+    const sends: Send[] = [
+      [100, '草', 0],
+      [ME, '草', 2],
+      ...session(15, 10, 10).map(([uid, line, at]): Send => [uid, line, at + 60]),
+    ]
+    const kept = new ManualBlendIndex(true)
+    feed(kept, sends)
+    const blend = kept.get(ROOM, ME)
+    const history = blend?.history ?? []
+    // The lone 草 isn't counted, so it isn't listed either
+    expect(history).toHaveLength(35)
+    expect(blend?.sends).toBe(35)
+    expect(history.map(send => send.at)).toEqual([...history.map(send => send.at)].sort((a, b) => a - b))
+    expect(history[0]).toEqual({ at: T0 + 65_000, text: '今天的第0句话', senders: 1, from: 'user100', lagMs: 5000 })
+    expect(history[1]).toEqual({ at: T0 + 85_000, text: '口号0', senders: 3 })
+    expect(history[2]).toEqual({ at: T0 + 100_000, text: '我自己想说的第0句', senders: 0 })
+    expect(history.filter(send => send.senders === 0)).toHaveLength(10)
+    expect(history.filter(send => 'from' in send)).toHaveLength(15)
+
+    const plain = new ManualBlendIndex()
+    feed(plain, sends)
+    expect(plain.get(ROOM, ME)).not.toHaveProperty('history')
+  })
+
   test('samples the longest copies, oldest first, with who sent the line before', () => {
     const index = new ManualBlendIndex()
     feed(index, [

@@ -4,7 +4,7 @@ import type { Assessment, ManualBlend, UserSummary } from '@laplace.live/rinnega
 import { DEFAULT_DETECTOR_OPTIONS } from '@laplace.live/rinnegan-sdk'
 
 import { buildReport, renderConsole, renderMarkdown } from '@/report/report'
-import { assessment } from '@/testing/fixtures'
+import { assessment, manualBlend } from '@/testing/fixtures'
 
 function reportOf(patch: Partial<Assessment>, manualBlends: ManualBlend[] = []) {
   const peak = assessment(patch)
@@ -52,24 +52,8 @@ describe('offline report', () => {
   })
 
   test('lists 手动融入 viewers and tags a flagged one', () => {
-    const at = 1_760_000_000_000
-    const copier: ManualBlend = {
-      roomId: 1,
-      uid: 42,
-      uname: 'bot',
-      sends: 86,
-      copies: 55,
-      chants: 18,
-      sources: 31,
-      switches: 84,
-      ownSwitches: 31,
-      plusOneLagMs: 5800,
-      samples: [
-        { at, text: '才八点', senders: 22 },
-        { at: at + 60_000, text: '你太云了，没玩过没发言权', senders: 1, from: '路人', lagMs: 5600 },
-      ],
-    }
-    const chanter: ManualBlend = { ...copier, uid: 43, uname: 'fan', chants: 55, sources: 0, plusOneLagMs: null }
+    const copier = manualBlend()
+    const chanter = manualBlend({ uid: 43, uname: 'fan', chants: 55, sources: 0, plusOneLagMs: null })
     const report = reportOf({ verdict: 'suspect', score: 70, evidence: [], proof: 0 }, [copier, chanter])
     expect(report.totals.manualBlend).toBe(2)
     expect(report.users[0]?.manualBlend).toBe(true)

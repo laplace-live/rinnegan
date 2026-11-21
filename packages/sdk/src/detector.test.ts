@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
+import type { DetectorOptions } from './detector.ts'
 import type { Assessment, ChatMessage } from './types.ts'
 
 import { DEFAULT_DETECTOR_OPTIONS, Detector } from './detector.ts'
@@ -539,8 +540,8 @@ describe('humans are never judged spam', () => {
 })
 
 describe('手动融入 marks viewers who mostly copy the room by hand', () => {
-  function manualBlendOf(messages: ChatMessage[], uid: number) {
-    const detector = new Detector()
+  function manualBlendOf(messages: ChatMessage[], uid: number, options: Partial<DetectorOptions> = {}) {
+    const detector = new Detector(options)
     for (const message of messages) detector.ingest(message)
     return detector.manualBlend(1, uid)
   }
@@ -562,6 +563,13 @@ describe('手动融入 marks viewers who mostly copy the room by hand', () => {
 
   test('not a viewer who mostly writes their own lines', () => {
     expect(manualBlendOf(mergeStreams(CROWD, chat(502, 40)), 502)).toBeNull()
+  })
+
+  test('lists every counted send with manualHistory', () => {
+    const room = mergeStreams(CROWD, simulatePlusOne(CROWD, persona(500), 100), chat(500, 30))
+    expect(manualBlendOf(room, 500)).not.toHaveProperty('history')
+    const blend = manualBlendOf(room, 500, { manualHistory: true })
+    expect(blend?.history).toHaveLength(blend?.sends ?? -1)
   })
 })
 

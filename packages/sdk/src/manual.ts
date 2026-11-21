@@ -37,6 +37,14 @@ interface PlusOneSource {
   lagMs: number
 }
 
+/** A line nobody else sent in the minute before. */
+interface OwnLine extends CopiedLine {
+  senders: 0
+}
+
+/** One text send the tally counted: a copy, or a line of the user's own when `senders` is 0. */
+export type TalliedSend = CopySample | OwnLine
+
 /** A viewer's copying over the session, when it earns the 手动融入 mark. */
 export interface ManualBlend {
   roomId: number
@@ -57,15 +65,18 @@ export interface ManualBlend {
   plusOneLagMs: number | null
   /** The longest copies, oldest first: a long line sent verbatim shows the copying best */
   samples: CopySample[]
+  /** Every counted send, oldest first; only from an index that keeps them */
+  history?: TalliedSend[]
 }
 
-interface Habit extends Omit<ManualBlend, 'sources' | 'plusOneLagMs'> {
+interface Habit extends Omit<ManualBlend, 'sources' | 'plusOneLagMs' | 'history'> {
   sources: Set<number>
   /** Latest +1 delays, ms */
   lags: number[]
   lastKey: string | null
   /** An assessment found automation proof */
   tool: boolean
+  history: TalliedSend[] | null
 }
 
 /**
@@ -76,6 +87,12 @@ export class ManualBlendIndex {
   readonly #recent = new CrowdIndex(COPY_WINDOW_MS)
   /** `${roomId}:${uid}` → habit, kept for the session */
   readonly #habits = new Map<string, Habit>()
+  readonly #keepHistory: boolean
+
+  /** `keepHistory`: also keep every counted send, for {@link ManualBlend.history}; memory then grows with the session. */
+  constructor(keepHistory = false) {
+    this.#keepHistory = keepHistory
+  }
 
   /** Count one text send; feed every room's sends in time order. */
   observe(roomId: number, uid: number, uname: string, key: string, text: string, at: number): void {
@@ -89,11 +106,14 @@ export class ManualBlendIndex {
       if (senders === 0) habit.ownSwitches++
       habit.lastKey = key
     }
-    if (senders === 0) return
+    if (senders === 0) {
+      habit.history?.push({ at, text, senders: 0 })
+      return
+    }
     habit.copies++
     if (senders >= CHANT_USERS) {
       habit.chants++
-      keepLongest(habit.samples, { at, text, senders })
+      keep(habit, { at, text, senders })
       return
     }
     // Only a +1 looks up its source: two senders at most, where a chant's thousands would make each send O(n).
@@ -103,12 +123,16 @@ export class ManualBlendIndex {
     habit.lags.push(at - last.at)
     if (habit.lags.length > LAGS_KEPT) habit.lags.shift()
     const from = this.#habits.get(`${roomId}:${last.uid}`)?.uname || `uid ${last.uid}`
-    keepLongest(habit.samples, { at, text, senders, from, lagMs: at - last.at })
+    keep(habit, { at, text, senders, from, lagMs: at - last.at })
   }
 
   /** Note an assessment's automation proof: signs of a tool rule the mark out for the session. */
   judged(roomId: number, uid: number, uname: string, proof: number): void {
-    if (proof >= TOOL_PROOF) this.#habit(roomId, uid, uname).tool = true
+    if (proof < TOOL_PROOF) return
+    const habit = this.#habit(roomId, uid, uname)
+    habit.tool = true
+    // Nothing reads the history of a habit that can never earn the mark
+    habit.history = null
   }
 
   /** The user's copying when it earns the mark, else null. */
@@ -142,6 +166,7 @@ export class ManualBlendIndex {
         samples: [],
         lastKey: null,
         tool: false,
+        history: this.#keepHistory ? [] : null,
       }
       this.#habits.set(id, habit)
     }
@@ -153,6 +178,11 @@ export class ManualBlendIndex {
 function isReaction(key: string): boolean {
   if (key.length <= REACTION_LENGTH) return true
   return !ONE_UNIT_GRAPHEMES.test(key) && graphemeLength(key) <= REACTION_LENGTH
+}
+
+function keep(habit: Habit, copy: CopySample): void {
+  habit.history?.push(copy)
+  keepLongest(habit.samples, copy)
 }
 
 /** Keep the {@link SAMPLES_KEPT} longest copies; a tie keeps the earlier one. */
@@ -192,5 +222,6 @@ function summarize(habit: Habit): ManualBlend {
     ownSwitches: habit.ownSwitches,
     plusOneLagMs: habit.lags.length > 0 ? median(habit.lags) : null,
     samples: habit.samples.map(sample => ({ ...sample })),
+    ...(habit.history ? { history: habit.history.map(send => ({ ...send })) } : {}),
   }
 }

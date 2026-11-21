@@ -52,6 +52,8 @@ export interface DetectorOptions {
   cooldownFloorsMs: number[]
   /** Raw samples kept per cluster for reports */
   samplesPerCluster: number
+  /** Keep every send the 手动融入 tally counts, for `ManualBlend.history`; memory then grows with the session */
+  manualHistory: boolean
 }
 
 export const DEFAULT_DETECTOR_OPTIONS: DetectorOptions = {
@@ -63,6 +65,7 @@ export const DEFAULT_DETECTOR_OPTIONS: DetectorOptions = {
   tau: 3.3,
   cooldownFloorsMs: [5000],
   samplesPerCluster: 5,
+  manualHistory: false,
 }
 
 /** A user flagged at least once, with their worst moment and every flagged stretch. */
@@ -250,12 +253,13 @@ export class Detector {
   readonly #crowd: CrowdIndex
   readonly #tapes = new Map<number, TrendTape>()
   readonly #lockstep = new LockstepIndex()
-  readonly #manual = new ManualBlendIndex()
+  readonly #manual: ManualBlendIndex
   #lastSweep = 0
 
   constructor(options: Partial<DetectorOptions> = {}) {
     this.options = { ...DEFAULT_DETECTOR_OPTIONS, ...options }
     this.#crowd = new CrowdIndex(this.options.windowMs)
+    this.#manual = new ManualBlendIndex(this.options.manualHistory)
   }
 
   /** Consume one message and return the sender's updated assessment. */

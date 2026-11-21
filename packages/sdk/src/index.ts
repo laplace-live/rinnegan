@@ -1,6 +1,6 @@
 export type { DetectorOptions, Episode, IngestResult, UserSummary } from './detector.ts'
 export type { EventSheet, Extracted, ExtractOptions, SkipReason } from './events.ts'
-export type { CopySample, ManualBlend } from './manual.ts'
+export type { CopySample, ManualBlend, TalliedSend } from './manual.ts'
 export type { InvisibleRun } from './normalize.ts'
 export type {
   Assessment,

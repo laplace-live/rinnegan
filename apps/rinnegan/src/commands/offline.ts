@@ -48,7 +48,8 @@ export async function runOffline(options: OfflineOptions): Promise<number> {
     { rooms: config.live.rooms, since: options.since, until: options.until, includeMirror: config.live.includeMirror }
   )
 
-  const detector = new Detector(config.detector)
+  // The HTML and JSON reports list every danmaku the 手动融入 tally counted
+  const detector = new Detector({ ...config.detector, manualHistory: options.writeFiles })
   for (const message of messages) detector.ingest(message)
   const summaries = detector.summaries()
 
@@ -96,9 +97,8 @@ export async function runOffline(options: OfflineOptions): Promise<number> {
     const jsonPath = join(config.reportDir, `${name}.json`)
     const markdownPath = join(config.reportDir, `${name}.md`)
     const htmlPath = join(config.reportDir, `${name}.html`)
-    const html = renderHtml(report, buildActivity(messages, report.users), {
+    const html = renderHtml(report, buildActivity(messages, report.users, report.manualBlends), {
       archives: options.files.map(file => basename(file)),
-      samples: options.samples,
     })
     await Bun.write(jsonPath, `${JSON.stringify(report, null, 2)}\n`)
     await Bun.write(markdownPath, renderMarkdown(report))
