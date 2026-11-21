@@ -34,7 +34,9 @@ function onEvent(event: LaplaceEvent) {
 user's score climbed 5 points since the last change, so a UI can update without flicker. One `Detector` handles any
 number of rooms. It keeps each user's messages for a sliding window (`windowMs`, 60 minutes by default), up to their
 last 300 (`maxRecordsPerUser`), but every flagged user's peak and episodes, and each viewer's 手动融入 tally, stay for
-the whole session: start a new `Detector` per stream to release them.
+the whole session: start a new `Detector` per stream to release them. `manualHistory: true` also keeps every text
+danmaku the tally counts, so a 手动融入 viewer's `history` lists each one as a chant, a +1 or a line of their own; that
+grows with every danmaku, so leave it off in long live sessions.
 
 Without `@laplace.live/event-types`, keep `skipLibCheck` on, since the types of `toChatMessage` and `extractMessages`
 refer to it. Danmaku from elsewhere can be passed to `ingest` directly as a `ChatMessage`.

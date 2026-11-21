@@ -1,4 +1,4 @@
-import type { Pattern, SkipReason, Verdict } from '@laplace.live/rinnegan-sdk'
+import type { ManualBlend, Pattern, SkipReason, TalliedSend } from '@laplace.live/rinnegan-sdk'
 import {
   clip,
   EVIDENCE_LABELS,
@@ -16,7 +16,7 @@ import type { OfflineReport, ReportUser } from '@/report/report'
 import { TIMELINE_CONTEXT_MS } from '@/report/activity'
 import SCRIPT from '@/report/page/script.js' with { type: 'text' }
 import STYLE from '@/report/page/style.css' with { type: 'text' }
-import { formatGap, formatScore, nameOf, repeatsText, userKey } from '@/report/report'
+import { copyNote, describeCopying, formatGap, formatScore, nameOf, repeatsText, userKey } from '@/report/report'
 import {
   clock,
   count,
@@ -32,8 +32,6 @@ import {
 export interface HtmlOptions {
   /** Archive file names for the header; never full paths, which can name the local user */
   archives: string[]
-  /** Samples shown per line */
-  samples: number
 }
 
 const REPO_URL = 'https://github.com/laplace-live/rinnegan'
@@ -55,6 +53,13 @@ interface Context {
   options: HtmlOptions
   at: Clock
 }
+
+/** The parts of a 手动融入 viewer's text danmaku, by CSS class. */
+const COPY_KINDS = { chant: '跟队形', 'plus-one': '+1', own: '自己说的' } as const
+
+type CopyKind = keyof typeof COPY_KINDS
+
+const TILE_LABELS = { ...VERDICT_LABELS, manual: '手动融入' }
 
 function chip(label: string): string {
   return `<span class="cp">${label}</span>`
@@ -104,6 +109,11 @@ function cardId(user: { roomId: number; uid: number }): string {
   return `u-${user.roomId}-${user.uid}`
 }
 
+/** Anchor of a viewer's 手动融入 entry. */
+function manualId(user: { roomId: number; uid: number }): string {
+  return `m-${user.roomId}-${user.uid}`
+}
+
 /** What the room-wide traffic line counts. */
 function roomScope(report: OfflineReport): string {
   return report.archive.rooms.length > 1 ? '所有房间' : '全房间'
@@ -147,6 +157,7 @@ ${tiles(ctx)}
 ${flagged ? timelines(ctx) : '<section><p class="empty">没有发现独轮车或可疑用户。</p></section>'}
 ${group(ctx, 'spam')}
 ${group(ctx, 'suspect')}
+${manualBlends(ctx)}
 ${notes(ctx)}
 </main>
 <div id="tip" role="tooltip" hidden></div>
@@ -200,7 +211,7 @@ function header(ctx: Context): string {
   return `<header class="top wrap">
 <p class="eyebrow">LAPLACE Rinnegan 輪廻眼 · 离线检测报告</p>
 <h1>${Bun.escapeHTML(roomsTitle(ctx))}${dates ? ` ${nowrap(`· ${dates}`)}` : ''}</h1>
-<p class="lede">回放 LAPLACE Chat 弹幕归档，找出用工具循环刷屏的独轮车。每位被标记的用户都附有判定证据、发送间隔和弹幕样本。</p>
+<p class="lede">回放 LAPLACE Chat 弹幕归档，找出用工具刷屏的独轮车。每位被标记的用户都附有判定证据、发送间隔和弹幕样本；大多在复读别人的观众另列为手动融入。</p>
 <dl class="meta">${rows.map(([term, value]) => `<dt>${term}</dt><dd>${value}</dd>`).join('')}</dl>
 </header>`
 }
@@ -215,8 +226,17 @@ function patternMix(users: readonly ReportUser[]): string {
     .join(' · ')
 }
 
-function tile(verdict: Verdict, n: number, sub: string, mix = ''): string {
-  return `<div class="tile"><span class="num">${count(n)}</span><span class="lbl"><i class="dot ${verdict}"></i>${VERDICT_LABELS[verdict]}</span><span class="sub">${sub}</span>${mix ? `<span class="mix">${mix}</span>` : ''}</div>`
+/** `sub` and `mix` are Rinnegan's own words, so no escaping. */
+function tile(kind: keyof typeof TILE_LABELS, n: number, sub: string, mix = ''): string {
+  return `<div class="tile"><span class="num">${count(n)}</span><span class="lbl"><i class="dot ${kind}"></i>${TILE_LABELS[kind]}</span><span class="sub">${sub}</span>${mix ? `<span class="mix">${mix}</span>` : ''}</div>`
+}
+
+/** `其中 2 人也被判为可疑`, for 手动融入 viewers the detector flagged as well. */
+function alsoFlagged(users: readonly ReportUser[]): string {
+  const marked = users.filter(user => user.manualBlend)
+  if (marked.length === 0) return ''
+  const verdicts = [...new Set(marked.map(user => VERDICT_LABELS[user.verdict]))]
+  return `其中 ${marked.length} 人也被判为${verdicts.join('或')}`
 }
 
 function tiles({ report }: Context): string {
@@ -225,11 +245,12 @@ function tiles({ report }: Context): string {
   const exempt = spam.filter(user => user.exempt).length
   const banned = exempt > 0 ? `实时模式默认封禁 ${spam.length - exempt} 人，豁免 ${exempt} 人` : '实时模式默认封禁'
   // `archive.users` counts uids across rooms
-  const unflagged = report.archive.users - new Set(report.users.map(user => user.uid)).size
+  const listed = new Set([...report.users, ...report.manualBlends].map(user => user.uid)).size
   return `<section class="tiles" aria-label="检测结果">
 ${tile('spam', spam.length, banned, patternMix(spam))}
 ${tile('suspect', suspects.length, '默认只报告，不封禁', patternMix(suspects))}
-${tile('none', Math.max(0, unflagged), '未被标记的用户')}
+${tile('manual', report.manualBlends.length, '大多在复读别人，只标记，不处置', alsoFlagged(report.users))}
+${tile('none', Math.max(0, report.archive.users - listed), '未被标记的用户')}
 </section>`
 }
 
@@ -270,20 +291,34 @@ ${users.map(user => card(ctx, user)).join('\n')}
 }
 
 function card(ctx: Context, user: ReportUser): string {
-  const key = userKey(user)
-  const gaps = ctx.activity.gaps.get(key)
-  const uid = link(`https://space.bilibili.com/${user.uid}`, `UID ${user.uid}`, 'uid')
+  const gaps = ctx.activity.gaps.get(userKey(user))
   return `<article class="card" id="${cardId(user)}">
 <div class="card-h">
-<div class="who"><span class="rank">#${user.rank}</span><h3>${Bun.escapeHTML(nameOf(user))}</h3>${uid}${badges(ctx.activity.badges.get(key))}</div>
+${who(ctx, user, `<span class="rank">#${user.rank}</span>`)}
 <span class="pill ${user.verdict}">${VERDICT_LABELS[user.verdict]} ${formatScore(user.score)}</span>
 </div>
 <p class="facts">${facts(ctx, user)}</p>
 ${user.exempt ? `<p class="exempt"><b>豁免</b>实时模式不会封禁：${Bun.escapeHTML(user.exempt)}</p>` : ''}
+${manualNote(ctx, user)}
 ${evidence(user)}
 ${gaps ? gapFigure(user, gaps) : ''}
 ${lines(ctx, user)}
+${allDanmaku(ctx, user)}
 </article>`
+}
+
+/** Name, UID link and badges, after the `rank` markup when there is one. */
+function who({ activity }: Context, user: { roomId: number; uid: number; uname: string }, rank = ''): string {
+  const uid = link(`https://space.bilibili.com/${user.uid}`, `UID ${user.uid}`, 'uid')
+  return `<div class="who">${rank}<h3>${Bun.escapeHTML(nameOf(user))}</h3>${uid}${badges(activity.badges.get(userKey(user)))}</div>`
+}
+
+/** A flagged user's 手动融入 mark, linking to their entry in that list. */
+function manualNote({ report }: Context, user: ReportUser): string {
+  const key = userKey(user)
+  const blend = report.manualBlends.find(blend => userKey(blend) === key)
+  if (!blend) return ''
+  return `<p class="manual-note"><a href="#${manualId(user)}"><b>手动融入</b></a>${describeCopying(blend)}</p>`
 }
 
 function badges(found: Badges | undefined): string {
@@ -337,22 +372,97 @@ function gapFigure(user: ReportUser, gaps: GapHistogram): string {
   return `<figure class="fig inset"><div class="chart" data-gaps="${userKey(user)}" data-label="${label}"></div><figcaption>${caption.join('')}</figcaption></figure>`
 }
 
-function lines({ options, at }: Context, user: ReportUser): string {
+/** One danmaku in a list; `note` is markup that follows the text. No `datetime`: lists run to tens of thousands of rows. */
+function row(at: Clock, ms: number, text: string, note = ''): string {
+  return `<li><time>${at.second(ms)}</time><span>${danmaku(text)}${note}</span></li>`
+}
+
+/** A note after a danmaku, led by a dot in `kind`'s copy bar color when given. */
+function via(text: string, kind?: CopyKind): string {
+  return `<span class="via">${kind ? `<i class="kind ${kind}"></i>` : ''}${Bun.escapeHTML(text)}</span>`
+}
+
+/** Rows behind a summary, closed until clicked; nothing without rows. */
+function collapsed(summary: string, rows: readonly string[]): string {
+  if (rows.length === 0) return ''
+  return `<details class="all"><summary>${summary}</summary><ol class="samples">${rows.join('')}</ol></details>`
+}
+
+/** Each line's summary opens its samples. */
+function lines({ at }: Context, user: ReportUser): string {
   if (user.clusters.length === 0) return ''
   const blocks = user.clusters.map(cluster => {
     const stats = [`${cluster.variants} 种写法`]
     if (cluster.medianGapMs > 0) stats.push(`中位间隔 ${formatGap(cluster.medianGapMs)}`)
     if (cluster.crowd > 0) stats.push(`同时 ${cluster.crowd} 人在刷`)
-    const samples = cluster.samples
-      .slice(0, options.samples)
-      .map(
-        sample =>
-          `<li><time datetime="${new Date(sample.timestamp).toISOString()}">${at.second(sample.timestamp)}</time><span>${danmaku(sample.text)}</span></li>`
-      )
-    const list = samples.length > 0 ? `<ol class="samples">${samples.join('')}</ol>` : ''
-    return `<div><p class="line-k"><b>「${danmaku(clip(cluster.key, 60, '…'))}」</b>×${cluster.count} · ${stats.join(' · ')}</p>${list}</div>`
+    const head = `<b>「${danmaku(clip(cluster.key, 60, '…'))}」</b>×${cluster.count} · ${stats.join(' · ')}`
+    const rows = cluster.samples.map(sample => row(at, sample.timestamp, sample.text))
+    if (rows.length === 0) return `<p class="line-k">${head}</p>`
+    return `<details class="line"><summary class="line-k">${head}</summary><ol class="samples">${rows.join('')}</ol></details>`
   })
   return `<div class="lines">${blocks.join('')}</div>`
+}
+
+/** Every danmaku the user sent in the archive. */
+function allDanmaku({ activity, at }: Context, user: ReportUser): string {
+  const sent = activity.danmaku.get(userKey(user)) ?? []
+  const rows = sent.map(message => row(at, message.timestamp, message.text, message.isEmote ? via('表情') : ''))
+  return collapsed(`全部 ${count(rows.length)} 条弹幕`, rows)
+}
+
+function manualBlends(ctx: Context): string {
+  const blends = ctx.report.manualBlends
+  if (blends.length === 0) return ''
+  const legend = Object.entries(COPY_KINDS).map(
+    ([kind, label]) => `<span><i class="swatch-seg ${kind}"></i>${label}</span>`
+  )
+  return `<section aria-labelledby="h-manual">
+<h2 id="h-manual">手动融入 · ${blends.length} 人</h2>
+<p class="sec-intro">弹幕大多是复读别人（跟队形或 +1），也会自己说话，看不出用了工具。只标记，不处置：实时模式不会因此封禁或豁免任何人。按复读条数排序，色条是每人文字弹幕的构成。</p>
+<div class="legend">${legend.join('')}</div>
+<ol class="manual">
+${blends.map(blend => manualEntry(ctx, blend)).join('\n')}
+</ol>
+</section>`
+}
+
+function manualEntry(ctx: Context, blend: ManualBlend): string {
+  const { report, at } = ctx
+  const key = userKey(blend)
+  const user = report.users.find(user => userKey(user) === key)
+  const pill = user
+    ? `<a class="pill ${user.verdict}" href="#${cardId(user)}">${VERDICT_LABELS[user.verdict]} ${formatScore(user.score)}</a>`
+    : ''
+  const room = report.archive.rooms.length > 1 ? `房间 ${blend.roomId} · ` : ''
+  const rows = (blend.history ?? []).map(send => row(at, send.at, send.text, tally(send)))
+  return `<li id="${manualId(blend)}">
+<div class="card-h">${who(ctx, blend)}${pill}</div>
+${copyBar(blend)}
+<p class="facts">${room}${describeCopying(blend)}</p>
+${collapsed(`全部 ${count(rows.length)} 条文字弹幕`, rows)}
+</li>`
+}
+
+/** How a counted send was made, marked in its part of the copy bar's color. */
+function tally(send: TalliedSend): string {
+  if (send.senders === 0) return via(COPY_KINDS.own, 'own')
+  return via(copyNote(send), 'from' in send ? 'plus-one' : 'chant')
+}
+
+/** A viewer's text danmaku as chants, +1s and lines of their own; the section's legend names the parts. */
+function copyBar(blend: ManualBlend): string {
+  const counts: [CopyKind, number][] = [
+    ['chant', blend.chants],
+    ['plus-one', blend.copies - blend.chants],
+    ['own', blend.sends - blend.copies],
+  ]
+  const parts = counts.filter(([, n]) => n > 0)
+  const share = (n: number) => `${Math.round((n / blend.sends) * 100)}%`
+  const label = parts.map(([kind, n]) => `${COPY_KINDS[kind]} ${n} 条（${share(n)}）`).join('，')
+  const segments = parts.map(
+    ([kind, n]) => `<i class="${kind}" style="flex-grow:${n}" data-tip="${COPY_KINDS[kind]} ${n} 条 · ${share(n)}"></i>`
+  )
+  return `<div class="copy-bar" role="img" aria-label="${blend.sends} 条文字弹幕：${label}">${segments.join('')}</div>`
 }
 
 function notes({ report }: Context): string {
@@ -360,8 +470,9 @@ function notes({ report }: Context): string {
   const generatedAt = Date.parse(report.generatedAt)
   return `<section aria-labelledby="h-notes" class="foot">
 <h2 id="h-notes">说明</h2>
-<p>分数 0–100，由 ${windowMs / 60_000} 分钟检测窗口内的重复次数与自动化证据（不可见字符、固定节拍、发送节拍、模板轮播、跟风触发等）算出。分数 ≥ ${spamScore} 且自动化证据 ≥ ${minAutomation} 判为独轮车，≥ ${suspectScore} 为可疑；单纯的重复（刷屏量）不算自动化证据。</p>
-<p>每位用户的模式、证据和样本取自其分数最高的时刻；标记时段是分数保持在可疑及以上的连续时间。工具插入的不可见字符显示为 ${chip('U+00AD')} 这样的编号。</p>
+<p>分数 0–100，由 ${windowMs / 60_000} 分钟检测窗口内的重复次数与自动化证据（不可见字符、固定节拍、发送节拍、模板轮播、跟风触发、多号同步等）算出。分数 ≥ ${spamScore} 且自动化证据 ≥ ${minAutomation} 判为独轮车，≥ ${suspectScore} 为可疑；单纯的重复（刷屏量）不算自动化证据。</p>
+<p>每位用户的模式、证据和样本取自其分数最高的时刻，点开每条内容可看样本，点开「全部弹幕」可看其在归档里发的每一条；标记时段是分数保持在可疑及以上的连续时间。工具插入的不可见字符显示为 ${chip('U+00AD')} 这样的编号。</p>
+<p>手动融入按整场统计，不看检测窗口：文字弹幕大多是复读别人刚发过的内容，换内容时也常换成自己说的，且整场没出现用工具的迹象。点开「全部文字弹幕」可看每条算作跟队形、+1 还是自己说的；表情、@ 回复和单独发的一两个字（如「？」）不计入。</p>
 <p>时间为 ${report.archive.messages > 0 ? utcOffsets(report.archive.from, report.archive.to) : utcOffset(generatedAt)}。本报告是单个 HTML 文件，离线也能打开。由 ${link(REPO_URL, Bun.escapeHTML(report.tool))} 生成于 ${dateTime(generatedAt)}。</p>
 </section>`
 }

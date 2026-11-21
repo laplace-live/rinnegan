@@ -222,7 +222,7 @@ export function renderConsole(
 }
 
 /** e.g. `复读 43/67 条（跟队形 18 条，+1 了 23 人的 25 条，通常比原弹幕晚 6.3s），自己说的 24 条` */
-function describeCopying(blend: ManualBlend): string {
+export function describeCopying(blend: ManualBlend): string {
   const parts: string[] = []
   if (blend.chants > 0) parts.push(`跟队形 ${blend.chants} 条`)
   const plusOnes = blend.copies - blend.chants
@@ -238,11 +238,13 @@ function plusOneCell(blend: ManualBlend): string {
   return plusOnes > 0 ? `${plusOnes}（${blend.sources} 人）` : '0'
 }
 
+/** How a copy was made: `跟 22 人一起刷`, or `复读 路人，晚 5.6s` for a +1. */
+export function copyNote(sample: CopySample): string {
+  return 'from' in sample ? `复读 ${sample.from}，晚 ${formatGap(sample.lagMs)}` : `跟 ${sample.senders} 人一起刷`
+}
+
 function copySample(sample: CopySample): string {
-  const line = `「${escapeInvisible(clip(sample.text, 40))}」`
-  return 'from' in sample
-    ? `${line} 复读 ${sample.from}，晚 ${formatGap(sample.lagMs)}`
-    : `${line} 跟 ${sample.senders} 人一起刷`
+  return `「${escapeInvisible(clip(sample.text, 40))}」 ${copyNote(sample)}`
 }
 
 function cell(text: string): string {

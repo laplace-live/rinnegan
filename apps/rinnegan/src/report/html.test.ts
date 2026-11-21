@@ -1,15 +1,23 @@
 import { describe, expect, test } from 'bun:test'
-import type { ChatMessage } from '@laplace.live/rinnegan-sdk'
-import { Detector } from '@laplace.live/rinnegan-sdk'
+import type { Assessment, ChatMessage, ManualBlend, UserSummary } from '@laplace.live/rinnegan-sdk'
+import { DEFAULT_DETECTOR_OPTIONS, Detector } from '@laplace.live/rinnegan-sdk'
 
+import type { OfflineReport } from '@/report/report'
 import type { Persona } from '@/testing/simulate'
 
 import { buildActivity } from '@/report/activity'
 import { renderHtml } from '@/report/html'
 import { buildReport } from '@/report/report'
+import { assessment, manualBlend } from '@/testing/fixtures'
 import { mergeStreams, simulateChatterboxLoop, simulateHumanChat } from '@/testing/simulate'
 
 const T0 = Date.parse('2026-10-20T12:00:00Z')
+
+/** As offline mode renders it. */
+function renderPage(report: OfflineReport, messages: readonly ChatMessage[] = []): string {
+  const activity = buildActivity(messages, report.users, report.manualBlends)
+  return renderHtml(report, activity, { archives: ['room.lca'] })
+}
 
 function render(messages: ChatMessage[]): string {
   const detector = new Detector()
@@ -28,8 +36,34 @@ function render(messages: ChatMessage[]): string {
     },
     detector: detector.options,
     summaries: detector.summaries(),
+    manualBlends: detector.manualBlends(),
   })
-  return renderHtml(report, buildActivity(messages, report.users), { archives: ['room.lca'], samples: 2 })
+  return renderPage(report, messages)
+}
+
+/** A 100-user archive with these 手动融入 viewers and flagged peaks. */
+function renderMarked(manualBlends: ManualBlend[], peaks: Partial<Assessment>[] = []): string {
+  const summaries = peaks.map((patch): UserSummary => {
+    const peak = assessment({ at: T0, ...patch })
+    return { roomId: 1, uid: peak.uid, uname: peak.uname, messages: 40, firstAt: T0, lastAt: T0, peak, episodes: [] }
+  })
+  const report = buildReport({
+    version: '0.0.0',
+    archive: {
+      path: 'room.lca',
+      format: 'gzip',
+      messages: 5000,
+      users: 100,
+      rooms: [1],
+      from: T0,
+      to: T0 + 3_600_000,
+      skipped: {},
+    },
+    detector: DEFAULT_DETECTOR_OPTIONS,
+    summaries,
+    manualBlends,
+  })
+  return renderPage(report)
 }
 
 function loop(persona: Persona, template: string): ChatMessage[] {
@@ -94,6 +128,77 @@ describe('renderHtml', () => {
     expect(html).not.toMatch(/<link|<script[^>]*\ssrc=|@import|url\(/)
     expect(html).toContain('room.lca')
     expect(html).not.toContain('/home/moderator')
+  })
+
+  test('opens each line’s samples, and every danmaku a flagged user sent, on click', () => {
+    const messages = loop({ uid: 4242, uname: 'loop-bot', roomId: 1 }, '关注主播谢谢喵')
+    const last = messages.at(-1) as ChatMessage
+    const sticker = { ...last, id: 'sticker', text: '[明前奶绿_MA]', isEmote: true, timestamp: last.timestamp + 1000 }
+    const page = render([...messages, sticker])
+    // Every kept sample, not just the first few the console prints
+    const line = page.match(/<details class="line"><summary class="line-k"><b>「.*?<\/details>/s)?.[0] ?? ''
+    expect(line.match(/<li>/g)).toHaveLength(DEFAULT_DETECTOR_OPTIONS.samplesPerCluster)
+    expect(page).toContain(`<details class="all"><summary>全部 ${messages.length + 1} 条弹幕</summary>`)
+    expect(page).toContain('[明前奶绿_MA]<span class="via">表情</span>')
+  })
+
+  test('lists 手动融入 viewers with what they copied, linked both ways to a flagged one', () => {
+    const copier = manualBlend({
+      history: [
+        { at: T0, text: '才八点', senders: 22 },
+        { at: T0 + 30_000, text: '我自己想说的话', senders: 0 },
+        { at: T0 + 60_000, text: '你太云了，没玩过没发言权', senders: 1, from: '路人', lagMs: 5600 },
+      ],
+    })
+    const chanter = manualBlend({ uid: 43, uname: 'chanter', chants: 55, sources: 0, plusOneLagMs: null })
+    const page = renderMarked([copier, chanter], [{ verdict: 'suspect', score: 70, evidence: [], proof: 0 }])
+    expect(page).toContain('手动融入 · 2 人')
+    expect(page).toContain('其中 1 人也被判为可疑')
+    // 100 users, less the suspect and the chanter, who are both marked
+    expect(page).toContain('<span class="num">98</span><span class="lbl"><i class="dot none"></i>正常')
+
+    expect(page).toContain(
+      '<p class="manual-note"><a href="#m-1-42"><b>手动融入</b></a>复读 55/86 条（跟队形 18 条，+1 了 31 人的 37 条，通常比原弹幕晚 5.8s），自己说的 31 条</p>'
+    )
+    expect(page).toContain('<li id="m-1-42">')
+    expect(page).toContain('<a class="pill suspect" href="#u-1-42">可疑 70.0</a>')
+    expect(page).toContain('<li id="m-1-43">')
+    expect(page).not.toContain('href="#u-1-43"')
+
+    // Every part's count and share; a part at zero draws nothing
+    expect(page).toContain('aria-label="86 条文字弹幕：跟队形 18 条（21%），+1 37 条（43%），自己说的 31 条（36%）"')
+    expect(page).toContain('aria-label="86 条文字弹幕：跟队形 55 条（64%），自己说的 31 条（36%）"')
+
+    // Every counted send, tagged; the chanter has no history, so no list
+    expect(page.match(/<details class="all">/g)).toHaveLength(1)
+    expect(page).toContain('<summary>全部 3 条文字弹幕</summary>')
+    expect(page).toContain('才八点<span class="via"><i class="kind chant"></i>跟 22 人一起刷</span>')
+    expect(page).toContain('我自己想说的话<span class="via"><i class="kind own"></i>自己说的</span>')
+    expect(page).toContain(
+      '你太云了，没玩过没发言权<span class="via"><i class="kind plus-one"></i>复读 路人，晚 5.6s</span>'
+    )
+  })
+
+  test('escapes 手动融入 names and copied lines, and chips their invisible chars', () => {
+    const page = renderMarked([
+      manualBlend({
+        uname: '<img src=x onerror=alert(1)>',
+        history: [{ at: T0, text: '</script>千\u00AD舰', senders: 1, from: '<i>路人</i>', lagMs: 1000 }],
+      }),
+    ])
+    expect(page).not.toContain('<img')
+    expect(page).toContain('<h3>&lt;img src=x onerror=alert(1)&gt;</h3>')
+    expect(page).toContain(
+      '&lt;/script&gt;千<span class="cp">U+00AD</span>舰<span class="via"><i class="kind plus-one"></i>复读 &lt;i&gt;路人&lt;/i&gt;，晚 1.0s</span>'
+    )
+    expect(page.match(/<\/script>/g)).toHaveLength(2)
+  })
+
+  test('leaves the 手动融入 list out when nobody earns the mark', () => {
+    const page = renderMarked([], [{ verdict: 'suspect', score: 70, evidence: [], proof: 0 }])
+    expect(page).toContain('<span class="num">0</span><span class="lbl"><i class="dot manual"></i>手动融入')
+    expect(page).not.toContain('id="h-manual"')
+    expect(page).not.toContain('class="manual-note"')
   })
 
   test('says so when nobody is flagged', () => {

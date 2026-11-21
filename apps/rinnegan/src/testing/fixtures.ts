@@ -1,4 +1,4 @@
-import type { Assessment } from '@laplace.live/rinnegan-sdk'
+import type { Assessment, ManualBlend } from '@laplace.live/rinnegan-sdk'
 
 import type { BanRecord } from '@/store/types'
 
@@ -36,6 +36,28 @@ export function assessment(patch: Partial<Assessment> = {}): Assessment {
     guardType: 0,
     medalLevel: 0,
     proof: 0.95,
+    ...patch,
+  }
+}
+
+/** A 手动融入 mark on {@link assessment}'s user: 55 of 86 text danmaku copied; `patch` overrides any field. */
+export function manualBlend(patch: Partial<ManualBlend> = {}): ManualBlend {
+  const at = 1_760_000_000_000
+  return {
+    roomId: 1,
+    uid: 42,
+    uname: 'bot',
+    sends: 86,
+    copies: 55,
+    chants: 18,
+    sources: 31,
+    switches: 84,
+    ownSwitches: 31,
+    plusOneLagMs: 5800,
+    samples: [
+      { at, text: '才八点', senders: 22 },
+      { at: at + 60_000, text: '你太云了，没玩过没发言权', senders: 1, from: '路人', lagMs: 5600 },
+    ],
     ...patch,
   }
 }

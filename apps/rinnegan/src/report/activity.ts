@@ -79,33 +79,40 @@ export interface Activity {
   periods: Period[]
   /** By {@link userKey}; absent when a user has too few gaps */
   gaps: Map<string, GapHistogram>
-  /** As of each user's peak, by {@link userKey} */
+  /** As of each flagged user's peak, or a 手动融入 viewer's last danmaku, by {@link userKey} */
   badges: Map<string, Badges>
+  /** Every danmaku of each flagged user, oldest first, by {@link userKey} */
+  danmaku: Map<string, ChatMessage[]>
 }
 
-/** Timelines, send-gap histograms and badges for the flagged `users`; `messages` sorted oldest first. */
-export function buildActivity(messages: readonly ChatMessage[], users: readonly ReportUser[]): Activity {
+/**
+ * Timelines, send-gap histograms, badges and danmaku for the flagged `users`, and badges for the 手动融入 `copiers`;
+ * `messages` sorted oldest first.
+ */
+export function buildActivity(
+  messages: readonly ChatMessage[],
+  users: readonly ReportUser[],
+  copiers: readonly { roomId: number; uid: number }[] = []
+): Activity {
   const flagged = new Map(users.map(user => [userKey(user), user]))
-  const sends = new Map<string, number[]>()
+  const marked = new Set(copiers.map(userKey))
+  const danmaku = new Map<string, ChatMessage[]>()
   const badges = new Map<string, Badges>()
   const hosts = new Map<number, string>()
   for (const message of messages) {
     if (message.userType === 100 && message.uname) hosts.set(message.roomId, message.uname)
     const key = userKey(message)
     const user = flagged.get(key)
-    if (!user) continue
-    const times = sends.get(key)
-    if (times) times.push(message.timestamp)
-    else sends.set(key, [message.timestamp])
-    if (message.timestamp <= user.peakAt || !badges.has(key)) {
-      badges.set(key, {
-        userType: message.userType,
-        guardType: message.guardType,
-        medalName: message.medalName ?? '',
-        medalLevel: message.medalLevel,
-      })
+    if (!user) {
+      if (marked.has(key)) badges.set(key, badgesOf(message))
+      continue
     }
+    const own = danmaku.get(key)
+    if (own) own.push(message)
+    else danmaku.set(key, [message])
+    if (message.timestamp <= user.peakAt || !badges.has(key)) badges.set(key, badgesOf(message))
   }
+  const sends = new Map([...danmaku].map(([key, own]) => [key, own.map(message => message.timestamp)]))
 
   const gaps = new Map<string, GapHistogram>()
   for (const user of users) {
@@ -113,7 +120,16 @@ export function buildActivity(messages: readonly ChatMessage[], users: readonly 
     const histogram = gapHistogram(sends.get(userKey(user)) ?? [], tickMs)
     if (histogram) gaps.set(userKey(user), histogram)
   }
-  return { hosts, periods: periodsOf(messages, users, sends), gaps, badges }
+  return { hosts, periods: periodsOf(messages, users, sends), gaps, badges, danmaku }
+}
+
+function badgesOf(message: ChatMessage): Badges {
+  return {
+    userType: message.userType,
+    guardType: message.guardType,
+    medalName: message.medalName ?? '',
+    medalLevel: message.medalLevel,
+  }
 }
 
 function periodsOf(

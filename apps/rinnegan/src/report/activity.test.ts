@@ -145,6 +145,20 @@ describe('buildActivity', () => {
     const activity = buildActivity(messages, users)
     expect(activity.badges.get('1:1')).toEqual({ userType: 0, guardType: 3, medalName: '奶糖花', medalLevel: 22 })
     expect(activity.hosts.get(1)).toBe('主播')
+    expect(activity.danmaku.get('1:1')?.map(sent => sent.timestamp)).toEqual([at(20, 0), at(20, 1), at(20, 5)])
+    expect(activity.danmaku.has('1:7')).toBe(false)
+  })
+
+  test('reads 手动融入 viewers’ badges from their last danmaku and draws nothing for them', () => {
+    const messages = [
+      message(3, at(20, 0), { medalLevel: 9, medalName: '奶糖花' }),
+      message(3, at(20, 5), { guardType: 3, medalLevel: 10, medalName: '奶糖花' }),
+    ]
+    const activity = buildActivity(messages, [], [{ roomId: 1, uid: 3 }])
+    expect(activity.badges.get('1:3')).toEqual({ userType: 0, guardType: 3, medalName: '奶糖花', medalLevel: 10 })
+    expect(activity.periods).toEqual([])
+    expect(activity.gaps.size).toBe(0)
+    expect(activity.danmaku.size).toBe(0)
   })
 
   test('has nothing to draw without flagged users', () => {

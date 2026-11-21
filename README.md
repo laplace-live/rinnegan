@@ -84,9 +84,9 @@ a line someone else sent in the minute before (a chant 3+ others were sending, o
 copies make up at least half of their text. At least 20% of their line changes also go to lines nobody else had just
 sent, and none of their assessments found automation proof of 0.5 or more. One- and two-character reactions such as
 「？」 count only as part of a chant. Accounts left to 自动融入 write almost nothing of their own (under 12% of line
-changes on both archives), so they never qualify. The mark only labels a habit: the console, Markdown and JSON reports
-list these viewers and tag flagged ones, live mode tags the suspect lines `--verbose` prints and lists them in the
-`session-end` audit event, and it never bans or exempts anyone.
+changes on both archives), so they never qualify. The mark only labels a habit: the console, Markdown, JSON and HTML
+reports list these viewers and tag flagged ones, live mode tags the suspect lines `--verbose` prints and lists them in
+the `session-end` audit event, and it never bans or exempts anyone.
 
 ### Accuracy
 
@@ -217,7 +217,10 @@ machine's time zone; `--timezone` (`RINNEGAN_TIMEZONE`, `timeZone` in the config
 The HTML report is a single self-contained file: styles, charts, and data are inline and nothing loads from the
 network, so it opens offline in any modern browser and can be shared as is. Next to each flagged user's evidence and
 samples, it charts when they were active against the whole room's traffic and how far apart their sends were, with
-the send tick Rinnegan fitted. It names archives by file name only, never by their local path.
+the send tick Rinnegan fitted. Viewers marked 手动融入 follow, each with a bar splitting their text danmaku into chants,
++1s and lines of their own. A click opens each line's samples, every danmaku a flagged user sent, or every text
+danmaku a 手动融入 viewer sent, each marked as a chant, a +1 (whose line, how late) or their own. It names archives by
+file name only, never by their local path.
 
 ## Configuration
 
