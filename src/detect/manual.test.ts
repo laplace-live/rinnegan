@@ -100,6 +100,15 @@ describe('ManualBlendIndex', () => {
     expect(index.all()).toEqual([])
   })
 
+  test('tallies a chant thousands strong in linear time', () => {
+    const index = new ManualBlendIndex()
+    const started = performance.now()
+    // 30,000 viewers in one minute: a scan of every earlier sender per send would take seconds.
+    for (let i = 0; i < 30_000; i++) index.observe(ROOM, 10_000 + i, `v${i}`, '一起刷', '一起刷', T0 + i * 2)
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(index.get(ROOM, 39_999)).toBeNull()
+  })
+
   test('keeps rooms apart', () => {
     const index = new ManualBlendIndex()
     for (const [uid, line, seconds] of session(15, 10, 10)) {

@@ -222,7 +222,7 @@ function copySample(sample: CopySample): string {
   const line = `「${escapeInvisible(clip(sample.text, 40))}」`
   return sample.senders >= CHANT_USERS
     ? `${line} 跟 ${sample.senders} 人一起刷`
-    : `${line} 复读 ${sample.from}，晚 ${formatGap(sample.lagMs)}`
+    : `${line} 复读 ${sample.from}，晚 ${formatGap(sample.lagMs ?? 0)}`
 }
 
 function cell(text: string): string {

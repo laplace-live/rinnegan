@@ -26,10 +26,10 @@ export interface CopySample {
   text: string
   /** Others who sent the line in the minute before */
   senders: number
-  /** Who sent the line last before the user */
-  from: string
-  /** How long after them, ms */
-  lagMs: number
+  /** For a +1: who sent the line last before the user */
+  from?: string
+  /** For a +1: how long after them, ms */
+  lagMs?: number
 }
 
 /** A viewer's copying over the session, when it earns the 手动融入 mark. */
@@ -93,22 +93,21 @@ export class ManualBlendIndex {
       if (senders === 0) habit.ownSwitches++
       habit.lastKey = key
     }
+    if (senders === 0) return
+    habit.copies++
+    if (senders >= CHANT_USERS) {
+      habit.chants++
+      keepLongest(habit.samples, { at, text, senders })
+      return
+    }
+    // Only a +1 looks up its source: two senders at most, where a chant's thousands would make each send O(n).
     const last = this.#recent.latest(roomId, key, uid)
     if (!last) return
-    habit.copies++
-    if (senders >= CHANT_USERS) habit.chants++
-    else {
-      habit.sources.add(last.uid)
-      habit.lags.push(at - last.at)
-      if (habit.lags.length > LAGS_KEPT) habit.lags.shift()
-    }
-    keepLongest(habit.samples, {
-      at,
-      text,
-      senders,
-      from: this.#habits.get(`${roomId}:${last.uid}`)?.uname || `uid ${last.uid}`,
-      lagMs: at - last.at,
-    })
+    habit.sources.add(last.uid)
+    habit.lags.push(at - last.at)
+    if (habit.lags.length > LAGS_KEPT) habit.lags.shift()
+    const from = this.#habits.get(`${roomId}:${last.uid}`)?.uname || `uid ${last.uid}`
+    keepLongest(habit.samples, { at, text, senders, from, lagMs: at - last.at })
   }
 
   /** Note an assessment's automation proof: signs of a tool rule the mark out for the session. */
