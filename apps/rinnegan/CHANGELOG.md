@@ -1,5 +1,17 @@
 # @laplace.live/rinnegan
 
+## 0.4.0
+
+### Minor Changes
+
+- 60bf71e: Blur viewer names and UIDs in the HTML report with the 打码 switch
+- 60bf71e: Tag every danmaku of a flagged user as 跟队形, +1 or 自己说的 in the HTML report
+
+### Patch Changes
+
+- 60bf71e: Explain in plain words how long a flagged user waits between danmaku
+- 60bf71e: Color 跟队形, +1 and 自己说的 clearly apart, with one palette across the HTML report
+
 ## 0.3.0
 
 ### Minor Changes
