@@ -94,8 +94,18 @@ export function buildReport(options: {
   }
 }
 
+/** Score with one decimal, `100` without. */
+export function formatScore(score: number): string {
+  return score.toFixed(score >= 99.95 ? 0 : 1)
+}
+
+/** Median gap as `1.3s`, `—` when there is none. */
+export function formatGap(ms: number): string {
+  return ms > 0 ? `${(ms / 1000).toFixed(1)}s` : '—'
+}
+
 function verdictBadge(verdict: Verdict, score: number): string {
-  const text = `${VERDICT_LABELS[verdict]} ${score.toFixed(score >= 99.95 ? 0 : 1)}`
+  const text = `${VERDICT_LABELS[verdict]} ${formatScore(score)}`
   return verdict === 'spam' ? style.red(style.bold(text)) : style.yellow(text)
 }
 
@@ -149,7 +159,7 @@ export function renderConsole(
       }
       for (const cluster of user.clusters.slice(0, 2)) {
         lines.push(
-          `   「${escapeInvisible(clip(cluster.key, 40))}」×${cluster.count} · ${cluster.variants} 种写法 · 中位间隔 ${gap(cluster.medianGapMs)}${cluster.crowd ? ` · 同时 ${cluster.crowd} 人在刷` : ''}`
+          `   「${escapeInvisible(clip(cluster.key, 40))}」×${cluster.count} · ${cluster.variants} 种写法 · 中位间隔 ${formatGap(cluster.medianGapMs)}${cluster.crowd ? ` · 同时 ${cluster.crowd} 人在刷` : ''}`
         )
         for (const sample of cluster.samples.slice(0, options.samples)) {
           lines.push(style.gray(`      ${clock(sample.timestamp)}  ${escapeInvisible(sample.text)}`))
@@ -158,10 +168,6 @@ export function renderConsole(
     }
   }
   return lines.join('\n')
-}
-
-function gap(ms: number): string {
-  return ms > 0 ? `${(ms / 1000).toFixed(1)}s` : '—'
 }
 
 function cell(text: string): string {
@@ -208,7 +214,7 @@ export function renderMarkdown(report: OfflineReport): string {
     for (const cluster of user.clusters) {
       out.push(
         '',
-        `「${cell(escapeInvisible(cluster.key))}」×${cluster.count}，${cluster.variants} 种写法，中位间隔 ${gap(cluster.medianGapMs)}，同时 ${cluster.crowd} 人在刷`,
+        `「${cell(escapeInvisible(cluster.key))}」×${cluster.count}，${cluster.variants} 种写法，中位间隔 ${formatGap(cluster.medianGapMs)}，同时 ${cluster.crowd} 人在刷`,
         ''
       )
       for (const sample of cluster.samples)

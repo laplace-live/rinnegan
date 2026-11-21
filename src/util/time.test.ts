@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 
-import { clock, dateTime, fileStamp, localDate, setTimeZone, utcOffset } from '@/util/console'
+import { afterMidnight, clock, dateTime, fileStamp, localDate, setTimeZone, utcOffset } from '@/util/console'
 import { DEFAULT_TIME_ZONE, parseTime, zoneOffset } from '@/util/time'
 
 const HOUR = 3_600_000
@@ -65,6 +65,16 @@ describe('formatters', () => {
     setTimeZone('UTC+5:45')
     expect(dateTime(at)).toBe('2026-11-18 17:45:05')
     expect(utcOffset(at)).toBe('UTC+05:45')
+  })
+
+  test('afterMidnight counts wall-clock minutes from the zone’s midnight', () => {
+    expect(afterMidnight(at, 0)).toBe(Date.UTC(2026, 10, 17, 16))
+    expect(afterMidnight(at, 90)).toBe(Date.UTC(2026, 10, 17, 17, 30))
+    setTimeZone(LA)
+    // Clocks spring forward on Mar 8, so 03:00 comes two hours after midnight and the next midnight 23
+    const noon = Date.UTC(2026, 2, 8, 19)
+    expect(afterMidnight(noon, 180)).toBe(Date.UTC(2026, 2, 8, 10))
+    expect(afterMidnight(noon, 1440)).toBe(Date.UTC(2026, 2, 9, 7))
   })
 
   test('never throw on a bad timestamp', () => {

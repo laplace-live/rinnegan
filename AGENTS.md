@@ -21,6 +21,7 @@ Layout:
 | `src/store/`    | Persistent ban records (memory, SQLite, Postgres, Redis) and lift rules    |
 | `src/ai/`       | Optional second opinion: Jev decision model or an OpenAI-compatible LLM    |
 | `src/enforce/`  | Ban policy, exemptions, safety brake, dry-run                              |
+| `src/report/`   | Offline reports: console, Markdown, JSON and the self-contained HTML page  |
 | `src/audit/`    | JSONL audit log                                                            |
 | `src/commands/` | `live`, `offline`, `bans`, `unban`, `login`                                |
 | `src/cli.ts`    | Entry point                                                                |

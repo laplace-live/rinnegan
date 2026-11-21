@@ -52,6 +52,12 @@ export function zoneOffset(zone: string): (ms: number) => number {
   }
 }
 
+/** Unix ms at which a zone's clock reads `wall`, given as the UTC ms of its fields. */
+export function fromWallClock(wall: number, offsetAt: (ms: number) => number): number {
+  // Offset at the instant itself rather than at the wall-clock reading, so DST zones land right
+  return wall - offsetAt(wall - offsetAt(wall))
+}
+
 /** Unix ms of `2026-10-20`, `2026-10-20 20:00` or an ISO time, read in `zone` unless it ends in `Z` or an offset. */
 export function parseTime(value: string, label: string, zone: string): number {
   const match = TIME.exec(value.trim())
@@ -59,12 +65,7 @@ export function parseTime(value: string, label: string, zone: string): number {
     const [, year, month = '', day = '', hour = '0', minute = '00', second = '00', designator] = match
     const two = (text: string) => text.padStart(2, '0')
     const ms = Date.parse(`${year}-${two(month)}-${two(day)}T${two(hour)}:${minute}:${second}${designator ?? 'Z'}`)
-    if (Number.isFinite(ms)) {
-      if (designator) return ms
-      const offsetAt = zoneOffset(zone)
-      // Offset at the instant itself rather than at the wall-clock reading, so DST zones land right
-      return ms - offsetAt(ms - offsetAt(ms))
-    }
+    if (Number.isFinite(ms)) return designator ? ms : fromWallClock(ms, zoneOffset(zone))
   }
   throw new Error(`${label} 不是有效时间：${value}（格式如 2026-10-20 20:00）`)
 }

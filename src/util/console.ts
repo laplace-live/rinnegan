@@ -1,6 +1,6 @@
 import { styleText } from 'node:util'
 
-import { DEFAULT_TIME_ZONE, zoneOffset } from '@/util/time'
+import { DEFAULT_TIME_ZONE, fromWallClock, zoneOffset } from '@/util/time'
 
 type Format = Parameters<typeof styleText>[0]
 
@@ -57,6 +57,12 @@ export function localDate(ms: number): string {
 /** `YYYY-MM-DD HH:MM:SS` in the configured time zone. */
 export function dateTime(ms: number): string {
   return `${localDate(ms)} ${clock(ms)}`
+}
+
+/** Unix ms `minutes` of wall-clock time past the midnight that starts `ms`'s day in the configured time zone. */
+export function afterMidnight(ms: number, minutes: number): number {
+  const date = wallClock(ms)
+  return fromWallClock(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, minutes), offsetAt)
 }
 
 /** The configured time zone's offset at `ms`, as `UTC+08:00`. */
