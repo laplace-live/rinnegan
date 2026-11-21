@@ -104,7 +104,7 @@ export interface Assessment {
   pattern: Pattern
   /** Excess repeats (messages beyond the first of each repeated line) inside the window, or {@link triggerHits} */
   repeats: number
-  /** `repeats` counts 自动融入 trigger hits, not repeated messages: the replay set the score */
+  /** `repeats` counts 自动融入 line switches (trigger hits, or switches in step with another account), not repeated messages */
   triggerHits?: boolean
   /** User's messages inside the window */
   windowMessages: number

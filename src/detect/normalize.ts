@@ -12,6 +12,13 @@ const DECORATION_RE = /[\p{P}\p{Sm}\p{Z}\s\p{Mn}\p{Me}]/gu
 const PICTOGRAPHIC_RE = /^\p{Extended_Pictographic}$/u
 const WHITESPACE_CONTROLS = new Set(['\t', '\n', '\r'])
 const ZWJ = '‍'
+const ZWNJ = '\u200C'
+/** Scripts written with ZWNJ / ZWJ between letters to control joining: Persian and Urdu, Hindi, Bengali… */
+const JOINING_SCRIPT_RE =
+  /^[\p{Script=Arabic}\p{Script=Syriac}\p{Script=Nko}\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Gurmukhi}\p{Script=Gujarati}\p{Script=Oriya}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Kannada}\p{Script=Malayalam}\p{Script=Sinhala}]$/u
+/** Right-to-left letters; text written in them carries bidi marks as a matter of course */
+const RTL_LETTER_RE = /^(?=\p{L})[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}]$/u
+const BIDI_MARKS = new Set(['\u200E', '\u200F', '\u061C'])
 const BLACK_FLAG = '\u{1F3F4}'
 const TAG_END = '\u{E007F}'
 
@@ -29,6 +36,10 @@ function isVariationSelector(char: string): boolean {
 
 function isPictographic(char: string | undefined): boolean {
   return char !== undefined && PICTOGRAPHIC_RE.test(char)
+}
+
+function isJoiningScript(char: string | undefined): boolean {
+  return char !== undefined && JOINING_SCRIPT_RE.test(char)
 }
 
 /** Indices (into `chars`) of tag chars that belong to a legit emoji tag sequence like 🏴󠁧󠁢󠁳󠁣󠁴󠁿. */
@@ -55,16 +66,23 @@ function previousBase(chars: string[], index: number): string | undefined {
 
 /**
  * Positions (into `Array.from(text)`) of invisible chars only a tool would put there. Variation selectors, emoji ZWJ
- * sequences, flag tag sequences and plain whitespace controls are legit and skipped.
+ * sequences, flag tag sequences, joiners between letters of scripts written with them, bidi marks in right-to-left
+ * text and plain whitespace controls are legit and skipped.
  */
 function evasionIndices(chars: string[]): Set<number> {
   const found = new Set<number>()
   let legitTags: Set<number> | undefined
+  let rightToLeft: boolean | undefined
   for (let i = 0; i < chars.length; i++) {
     const char = chars[i] as string
     if (!HIDDEN_CHAR_RE.test(char)) continue
     if (WHITESPACE_CONTROLS.has(char) || isVariationSelector(char)) continue
     if (char === ZWJ && isPictographic(previousBase(chars, i)) && isPictographic(chars[i + 1])) continue
+    if ((char === ZWNJ || char === ZWJ) && isJoiningScript(chars[i - 1]) && isJoiningScript(chars[i + 1])) continue
+    if (BIDI_MARKS.has(char)) {
+      rightToLeft ??= chars.some(other => RTL_LETTER_RE.test(other))
+      if (rightToLeft) continue
+    }
     if (isTag(char)) {
       legitTags ??= legitTagIndices(chars)
       if (legitTags.has(i)) continue

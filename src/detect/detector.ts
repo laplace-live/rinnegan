@@ -472,6 +472,7 @@ export class Detector {
         state.clusters.clear()
         state.byKey.clear()
         state.replay = null
+        state.lastLine = null
         continue
       }
       this.#users.delete(id)

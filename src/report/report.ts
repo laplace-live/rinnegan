@@ -28,9 +28,9 @@ export interface ReportUser {
   verdict: Verdict
   score: number
   pattern: Pattern
-  /** Excess repeats in the window at the peak, or 自动融入 trigger hits when {@link triggerHits} */
+  /** Excess repeats in the window at the peak, or 自动融入 line switches when {@link triggerHits} */
   repeats: number
-  /** `repeats` counts trigger hits: the 自动融入 replay set the score */
+  /** `repeats` counts 自动融入 line switches: trigger hits, or switches in step with another account */
   triggerHits: boolean
   automation: number
   /** Total messages this user sent in the archive */
@@ -182,7 +182,7 @@ export function renderConsole(
       lines.push('')
       lines.push(`${style.bold(blend.uname || '(无名)')} ${style.gray(`uid ${blend.uid} · 房间 ${blend.roomId}`)}`)
       lines.push(`   ${describeCopying(blend)}`)
-      for (const sample of blend.samples.slice(-options.samples)) {
+      for (const sample of blend.samples.slice(0, options.samples)) {
         lines.push(style.gray(`      ${clock(sample.at)}  ${copySample(sample)}`))
       }
     }

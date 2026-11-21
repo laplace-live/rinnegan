@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { stripVTControlCharacters } from 'node:util'
 
 import type { UserSummary } from '@/detect/detector'
 import type { ManualBlend } from '@/detect/manual'
@@ -76,7 +77,8 @@ describe('offline report', () => {
     expect(report.totals.manualBlend).toBe(2)
     expect(report.users[0]?.manualBlend).toBe(true)
 
-    const text = renderConsole(report, { ...CONSOLE, samples: 2 })
+    // Plain text whether or not the terminal running the tests takes colors
+    const text = stripVTControlCharacters(renderConsole(report, { ...CONSOLE, samples: 2 }))
     expect(text).toContain('手动融入 2 人')
     expect(text).toContain('uid 42 · 房间 1 · 手动融入')
     expect(text).toContain('复读 55/86 条（跟队形 18 条，+1 了 31 人的 37 条，通常比原弹幕晚 5.8s），自己说的 31 条')
@@ -84,6 +86,10 @@ describe('offline report', () => {
     expect(text).toContain('「你太云了，没玩过没发言权」 复读 路人，晚 5.6s')
     expect(text).toContain('复读 55/86 条（跟队形 55 条），自己说的 31 条')
     expect(renderConsole(report, { ...CONSOLE, suspects: false })).not.toContain('── 手动融入')
+    const quiet = stripVTControlCharacters(renderConsole(report, { ...CONSOLE, samples: 0 }))
+    expect(quiet).toContain('复读 55/86 条')
+    expect(quiet).not.toContain('一起刷')
+    expect(quiet).not.toContain('复读 路人')
 
     const markdown = renderMarkdown(report)
     expect(markdown).toContain('手动融入 **2** 人')

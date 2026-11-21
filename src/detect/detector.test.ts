@@ -367,10 +367,47 @@ describe('chatterbox 自动融入 is caught', () => {
     }
     expect(volumes).toEqual([])
   })
+
+  test('an account back from idle on the line it left with still counts that switch', () => {
+    const say = (uid: number, line: string, at: number) =>
+      simulateFixedTimer({ persona: persona(uid), texts: [line], startAt: at, sends: 1, intervalMs: 1 })
+    // Flagged, so going idle keeps its state; it stops on 才八点, the line the swarm opens with 13 minutes later.
+    const loop = simulateChatterboxLoop({
+      persona: persona(421),
+      template: '才八点',
+      startAt: T0,
+      durationMs: 2 * MINUTE,
+      randomChar: '\u00AD',
+    })
+    const swarm: ChatMessage[] = []
+    for (let r = 0; r < 9; r++) {
+      const at = T0 + 13 * MINUTE + r * 20_000
+      const line = r === 0 ? '才八点' : `梗${r}`
+      for (const [i, uid] of [31, 32, 33].entries()) swarm.push(...say(uid, line, at + i * 300))
+      swarm.push(...say(420, line, at + 1600), ...say(421, line, at + 1650))
+    }
+    const detector = new Detector()
+    let last: Assessment | undefined
+    for (const message of mergeStreams(loop, swarm)) {
+      const { assessment } = detector.ingest(message)
+      if (message.uid === 421) last = assessment
+    }
+    expect(detector.summaries().find(summary => summary.uid === 421)?.episodes[0]?.verdict).toBe('spam')
+    expect(last?.evidence.find(item => item.kind === 'lockstep')?.detail).toContain('同步换内容 9 次')
+  })
 })
 
 describe('humans are never judged spam', () => {
   const SEEDS = 40
+
+  test('chatting in Persian, whose spelling puts ZWNJ inside words', () => {
+    const lines = ['روم', 'دانم', 'خواهم', 'بینم', 'گویم', 'نویسم', 'خورم', 'آیم', 'شنوم', 'پرسم'].map(
+      verb => `می\u200C${verb}`
+    )
+    const { peak } = judge(simulateHumanChat({ persona: persona(213), lines, startAt: T0, sends: 30 }), 213)
+    expect(peak?.verdict).toBe('none')
+    expect(peak?.evidence).toEqual([])
+  })
 
   test('chanting a line by hand, even 60 times', () => {
     for (let seed = 1; seed <= SEEDS; seed++) {

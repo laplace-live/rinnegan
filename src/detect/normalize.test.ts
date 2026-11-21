@@ -37,6 +37,15 @@ describe('findEvasionChars', () => {
     expect(findEvasionChars('奶姐\u{E0020}，资源发你私信了\u{E0021}')).toEqual(['\u{E0020}', '\u{E0021}'])
   })
 
+  test('ignores joiners and bidi marks that the writing itself needs', () => {
+    expect(findEvasionChars('می\u200Cخواهم')).toEqual([])
+    expect(findEvasionChars('क्\u200Dष')).toEqual([])
+    expect(findEvasionChars('שלום\u200F!')).toEqual([])
+    expect(findEvasionChars('中\u200C文')).toEqual(['\u200C'])
+    expect(findEvasionChars('你好\u200F')).toEqual(['\u200F'])
+    expect(findEvasionChars('你好\u061C')).toEqual(['\u061C'])
+  })
+
   test('ignores whitespace controls', () => {
     expect(findEvasionChars('第一行\r\n第二行\t')).toEqual([])
   })

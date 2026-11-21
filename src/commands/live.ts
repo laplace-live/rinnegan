@@ -260,6 +260,7 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
       source.stop()
       // Let in-flight lifts finish before the store closes under them.
       await lifecycle.stop()
+      const manualBlends = detector.manualBlends()
       audit.write('session-end', {
         reason,
         messages: judged,
@@ -274,7 +275,8 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
           verdict: summary.peak.verdict,
           pattern: summary.peak.pattern,
         })),
-        manualBlend: detector.manualBlends().map(({ roomId, uid, uname, sends, copies }) => ({
+        manualBlend: manualBlends.length,
+        manualBlends: manualBlends.map(({ roomId, uid, uname, sends, copies }) => ({
           roomId,
           uid,
           uname,
