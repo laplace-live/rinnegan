@@ -110,7 +110,8 @@ function chartData(html: string): {
 
 describe('renderHtml', () => {
   test('renders a flagged loop with its evidence, samples and chart data', () => {
-    const html = render(loop({ uid: 4242, uname: 'loop-bot', roomId: 1 }, '关注主播谢谢喵'))
+    const messages = loop({ uid: 4242, uname: 'loop-bot', roomId: 1 }, '关注主播谢谢喵')
+    const html = render(messages)
     expect(html).toStartWith('<!doctype html>')
     expect(html).toContain('独轮车 · 1 人')
     expect(html).toContain('<h3 class="pii">loop-bot</h3>')
@@ -129,8 +130,17 @@ describe('renderHtml', () => {
     expect(lane?.sends.every(inPeriod)).toBe(true)
     expect(lane?.flagged.length).toBeGreaterThan(0)
     expect(lane?.flagged.every(([from, to]) => from <= to && inPeriod(from) && inPeriod(to))).toBe(true)
+    // Every gap under the chart's range, in its bin
     const gaps = data.gaps['1:4242']
-    expect(gaps?.counts).toHaveLength((gaps?.max ?? 0) / (gaps?.bin ?? 1))
+    const binMs = Math.round((gaps?.bin ?? 1) * 1000)
+    const times = messages.map(message => message.timestamp)
+    const expected = new Array<number>(gaps?.counts.length ?? 0).fill(0)
+    for (let i = 1; i < times.length; i++) {
+      const bin = Math.floor(((times[i] as number) - (times[i - 1] as number)) / binMs)
+      if (bin < expected.length) expected[bin] = (expected[bin] as number) + 1
+    }
+    expect(expected.reduce((sum, n) => sum + n, 0)).toBeGreaterThan(messages.length / 2)
+    expect(gaps?.counts).toEqual(expected)
   })
 
   test('escapes viewer-controlled text, in markup and in the chart data', () => {
