@@ -1,5 +1,20 @@
 # @laplace.live/rinnegan
 
+## 0.2.0
+
+### Minor Changes
+
+- 013edab: Catch 自动融入 bots that switch lines in step with other accounts
+- 013edab: Mark viewers who mostly copy others' danmaku by hand as 手动融入
+- 020e403: Export offline results as an HTML report anyone can open in a browser
+- ec57ed0: Read and show times in China time, or another zone set with --timezone
+- 013edab: Catch 自动融入 bots that insert 随机字符 into each trending line they copy
+
+### Patch Changes
+
+- caa414b: Show message samples for 自动融入 bots that send each line only once
+- 6c15812: Stop flagging joiners and bidi marks that Persian, Arabic or Hindi text needs
+
 ## 0.1.1
 
 ### Patch Changes
