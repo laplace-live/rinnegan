@@ -1,5 +1,13 @@
 # @laplace.live/rinnegan
 
+## 0.3.0
+
+### Minor Changes
+
+- c3397e4: Click to see every danmaku a flagged or 手动融入 user sent in the HTML report
+- a2bfd0e: Widen the default detection window from 10 to 60 minutes
+- c3397e4: List viewers marked 手动融入 in the HTML report and tag flagged ones
+
 ## 0.2.0
 
 ### Minor Changes
