@@ -89,3 +89,5 @@ exception: **JSDoc/TSDoc doc-comments** (`/** … */`) attached to a declaration
   English.
 - Never log cookies, CSRF tokens, login-sync tokens or API keys.
 - Network clients take an injectable `fetch` so tests never hit the network.
+- Times are read and shown in `config.timeZone` (China time by default), whatever the machine's zone: parse with
+  `parseTime` from `@/util/time` and format with `@/util/console`, never with local-time `Date` methods.

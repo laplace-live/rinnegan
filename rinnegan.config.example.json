@@ -1,6 +1,7 @@
 {
   "logDir": "logs",
   "reportDir": "reports",
+  "timeZone": "Asia/Shanghai",
   "storeUrl": "sqlite:data/rinnegan.sqlite",
   "detector": {
     "windowMs": 600000,

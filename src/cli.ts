@@ -15,8 +15,9 @@ import {
   parsePatterns,
   validateConfig,
 } from '@/config'
-import { fail, log } from '@/util/console'
+import { fail, log, setTimeZone } from '@/util/console'
 import { errorMessage } from '@/util/guards'
+import { parseTime } from '@/util/time'
 import { VERSION } from '@/version'
 
 const HELP = `LAPLACE Rinnegan 輪廻眼 ${VERSION} — 识别并处置 B 站直播间的独轮车
@@ -36,6 +37,7 @@ const HELP = `LAPLACE Rinnegan 輪廻眼 ${VERSION} — 识别并处置 B 站直
       --suspect-score <n>   判定可疑的分数，默认 60
       --include-mirror      同时检测跨房弹幕
       --log-dir <dir>       审计日志目录，默认 ./logs
+      --timezone <时区>     读取 --since / --until 与显示时间所用的时区，默认 Asia/Shanghai（UTC+8）
   -h, --help                显示帮助
   -v, --version             显示版本
 
@@ -85,8 +87,9 @@ unban
 
 环境变量
   LOGIN_SYNC_TOKEN  LOGIN_SYNC_URL  LOGIN_SYNC_AUTH_KEY  RINNEGAN_LOGIN_FILE  RINNEGAN_EVENT_URL  RINNEGAN_EVENT_TOKEN
-  RINNEGAN_ROOMS  RINNEGAN_STORE_URL  RINNEGAN_LOG_DIR  RINNEGAN_REPORT_DIR  RINNEGAN_AI_MODE  RINNEGAN_AI_PROVIDER
-  RINNEGAN_AI_PROTOCOL  RINNEGAN_AI_BASE  RINNEGAN_AI_API_KEY  RINNEGAN_AI_MODEL  RINNEGAN_AI_THRESHOLD`
+  RINNEGAN_ROOMS  RINNEGAN_STORE_URL  RINNEGAN_LOG_DIR  RINNEGAN_REPORT_DIR  RINNEGAN_TIMEZONE
+  RINNEGAN_AI_MODE  RINNEGAN_AI_PROVIDER  RINNEGAN_AI_PROTOCOL  RINNEGAN_AI_BASE  RINNEGAN_AI_API_KEY  RINNEGAN_AI_MODEL
+  RINNEGAN_AI_THRESHOLD`
 
 const COMMON = {
   config: { type: 'string', short: 'c' },
@@ -96,6 +99,7 @@ const COMMON = {
   'suspect-score': { type: 'string' },
   'include-mirror': { type: 'boolean' },
   'log-dir': { type: 'string' },
+  timezone: { type: 'string' },
   'login-sync-token': { type: 'string' },
   'login-sync-url': { type: 'string' },
   'login-file': { type: 'string' },
@@ -155,15 +159,6 @@ type Values = Record<string, string | boolean | string[] | undefined>
 /** Not in DEFAULT_CONFIG, so in-process callers such as tests never pick up a real saved login */
 const CLI_DEFAULTS: ConfigLayer = { loginFile: 'data/bilibili-login.json' }
 
-/** Local-time parse that accepts `2026-10-20`, `2026-10-20 20:00` and full ISO strings. */
-export function parseTime(value: string, label: string): number {
-  let text = value.trim().replace(' ', 'T')
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) text += 'T00:00'
-  const ms = Date.parse(text)
-  if (!Number.isFinite(ms)) throw new Error(`${label} 不是有效时间：${value}`)
-  return ms
-}
-
 function str(values: Values, name: string): string | undefined {
   const value = values[name]
   return typeof value === 'string' ? value : undefined
@@ -194,6 +189,7 @@ export function configFromFlags(values: Values): ConfigLayer {
   const layer: ConfigLayer = {
     logDir: text('log-dir'),
     reportDir: text('report-dir'),
+    timeZone: text('timezone'),
     storeUrl: text('store'),
     loginFile: text('login-file'),
     unbanSpendCny: number('unban-spend'),
@@ -264,6 +260,7 @@ async function main(argv: string[]): Promise<number> {
     return 0
   }
   const config = await loadConfig(values)
+  setTimeZone(config.timeZone)
 
   switch (name) {
     case 'offline': {
@@ -277,8 +274,8 @@ async function main(argv: string[]): Promise<number> {
       return runOffline({
         files: positionals,
         config,
-        since: since ? parseTime(since, '--since') : undefined,
-        until: until ? parseTime(until, '--until') : undefined,
+        since: since ? parseTime(since, '--since', config.timeZone) : undefined,
+        until: until ? parseTime(until, '--until', config.timeZone) : undefined,
         top: numberFlag(values, 'top') ?? 30,
         samples: numberFlag(values, 'samples') ?? 3,
         suspects: !values['spam-only'],

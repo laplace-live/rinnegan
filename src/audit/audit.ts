@@ -27,8 +27,8 @@ export interface AuditLogOptions {
 }
 
 /**
- * Append-only JSONL audit trail, one file per local day (`audit-2026-10-21.jsonl`). Each entry is written
- * synchronously so a crash never loses the record of a ban that went out.
+ * Append-only JSONL audit trail, one file per day in the configured time zone (`audit-2026-10-21.jsonl`). Each entry
+ * is written synchronously so a crash never loses the record of a ban that went out.
  */
 export class AuditLog {
   readonly dir: string

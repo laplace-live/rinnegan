@@ -170,7 +170,9 @@ rinnegan offline a.lca b.lca --room 25034104 --since '2026-10-20 20:00' --top 50
 Accepts gzip- and zstd-compressed `.lca` archives as well as raw JSON exports (pre-2026 lz-string archives must be
 re-exported from a current build of LAPLACE Chat). Prints detected spammers followed by suspects—with evidence and
 message samples (rendering invisible characters like `⟨U+00AD⟩`)—and writes JSON and Markdown reports to `reports/`
-(`--no-report` to skip). Timestamps use local time; set `TZ=Asia/Shanghai` for China Standard Time.
+(`--no-report` to skip). `--since` / `--until` are read, and all times shown, in China Standard Time (UTC+8) whatever
+the machine's time zone; `--timezone` (`RINNEGAN_TIMEZONE`, `timeZone` in the config) takes an IANA name such as
+`America/Los_Angeles` or an offset such as `UTC-8` instead.
 
 ## Configuration
 
@@ -183,6 +185,7 @@ Precedence: defaults < `rinnegan.config.json` (or `--config`) < environment vari
 | `RINNEGAN_LOGIN_FILE`                                                                                                                                       | Saved QR code login             |
 | `RINNEGAN_EVENT_URL`, `RINNEGAN_EVENT_TOKEN`, `RINNEGAN_ROOMS`                                                                                              | Event source                    |
 | `RINNEGAN_STORE_URL`, `RINNEGAN_LOG_DIR`, `RINNEGAN_REPORT_DIR`                                                                                             | Persistence                     |
+| `RINNEGAN_TIMEZONE`                                                                                                                                         | Time zone (default UTC+8)       |
 | `RINNEGAN_AI_MODE`, `RINNEGAN_AI_PROVIDER`, `RINNEGAN_AI_PROTOCOL`, `RINNEGAN_AI_BASE`, `RINNEGAN_AI_API_KEY`, `RINNEGAN_AI_MODEL`, `RINNEGAN_AI_THRESHOLD` | AI review                       |
 
 ## Audit log

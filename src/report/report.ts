@@ -3,7 +3,7 @@ import type { ClusterSummary, Evidence, Pattern, Verdict } from '@/types'
 
 import { clip, escapeInvisible } from '@/detect/normalize'
 import { EVIDENCE_LABELS, PATTERN_LABELS, VERDICT_LABELS } from '@/report/labels'
-import { clock, count, dateTime, style } from '@/util/console'
+import { clock, count, dateTime, style, utcOffset } from '@/util/console'
 
 export interface ArchiveInfo {
   path: string
@@ -116,7 +116,7 @@ export function renderConsole(
   lines.push(
     `归档 ${archive.path}（${archive.format}）· ${count(archive.messages)} 条弹幕 · ${count(archive.users)} 名用户 · 房间 ${archive.rooms.join(', ') || '—'}`
   )
-  if (archive.messages > 0) lines.push(`时间 ${range(archive.from, archive.to)}`)
+  if (archive.messages > 0) lines.push(`时间 ${range(archive.from, archive.to)}（${utcOffset(archive.from)}）`)
   const skipped = Object.entries(archive.skipped)
   if (skipped.length) lines.push(style.gray(`跳过 ${skipped.map(([reason, n]) => `${reason} ${n}`).join(' · ')}`))
   lines.push('')
@@ -178,7 +178,7 @@ export function renderMarkdown(report: OfflineReport): string {
   out.push(
     `- 弹幕：${count(archive.messages)} 条，${count(archive.users)} 名用户，房间 ${archive.rooms.join(', ') || '—'}`
   )
-  if (archive.messages > 0) out.push(`- 时间：${range(archive.from, archive.to)}`)
+  if (archive.messages > 0) out.push(`- 时间：${range(archive.from, archive.to)}（${utcOffset(archive.from)}）`)
   out.push(`- 结果：独轮车 **${report.totals.spam}** 人，可疑 **${report.totals.suspect}** 人`, '')
   out.push('| # | 判定 | 分数 | 用户 | UID | 模式 | 窗口重复 | 证据 | 主要内容 |')
   out.push('| -: | --- | -: | --- | -: | --- | -: | --- | --- |')

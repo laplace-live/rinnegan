@@ -20,7 +20,14 @@ async function cli(...args: string[]): Promise<{ code: number; out: string; err:
     cwd: dir,
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...hostEnv, NO_COLOR: '1', LOGIN_SYNC_TOKEN: '', RINNEGAN_LOG_DIR: join(dir, 'logs') },
+    env: {
+      ...hostEnv,
+      NO_COLOR: '1',
+      LOGIN_SYNC_TOKEN: '',
+      RINNEGAN_LOG_DIR: join(dir, 'logs'),
+      // A machine off China time, which --since and the output must not follow
+      TZ: 'America/Los_Angeles',
+    },
   })
   const [out, err, code] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -49,6 +56,9 @@ describe('rinnegan CLI', () => {
     const missing = await cli('offline', join(dir, 'nope.lca'))
     expect(missing.code).toBe(1)
     expect(missing.err).toContain('找不到归档文件')
+    const zone = await cli('offline', '--timezone', 'Mars/Olympus', 'x.lca')
+    expect(zone.code).toBe(1)
+    expect(zone.err).toContain('未知的时区「Mars/Olympus」')
   })
 
   test('looks for a saved QR login in data/bilibili-login.json', async () => {
@@ -76,11 +86,26 @@ describe('rinnegan CLI', () => {
     const archive = join(dir, 'room.lca')
     await Bun.write(archive, Bun.gzipSync(new TextEncoder().encode(JSON.stringify([{ name: 'main', data: events }]))))
     const reports = join(dir, 'reports')
-    const result = await cli('offline', archive, '--report-dir', reports)
+    // The loop runs at 20:00 China time (05:00 in Los Angeles), so a Los Angeles --since would drop it
+    const result = await cli('offline', archive, '--report-dir', reports, '--since', '2026-10-20 19:59')
     expect(result.code).toBe(0)
     expect(result.out).toContain('独轮车 1 人')
     expect(result.out).toContain('loop-bot')
     expect(result.out).toContain('⟨U+00AD⟩')
+    expect(result.out).toContain('时间 2026-10-20 20:00:0')
+    expect(result.out).toContain('（UTC+08:00）')
+    const eastern = await cli(
+      'offline',
+      archive,
+      '--no-report',
+      '--timezone',
+      'America/New_York',
+      '--until',
+      '2026-10-20 08:02'
+    )
+    expect(eastern.out).toContain('独轮车 1 人')
+    expect(eastern.out).toContain('时间 2026-10-20 08:00:0')
+    expect(eastern.out).toContain('（UTC-04:00）')
     expect(
       readdirSync(reports)
         .sort()

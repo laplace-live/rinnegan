@@ -1,5 +1,7 @@
 import { styleText } from 'node:util'
 
+import { DEFAULT_TIME_ZONE, zoneOffset } from '@/util/time'
+
 type Format = Parameters<typeof styleText>[0]
 
 /** `styleText` drops the escapes itself when the stream isn't a TTY or `NO_COLOR` / `TERM=dumb` is set. */
@@ -28,24 +30,43 @@ function pad(n: number): string {
   return String(n).padStart(2, '0')
 }
 
-/** `HH:MM:SS` in local time. */
+let offsetAt = zoneOffset(DEFAULT_TIME_ZONE)
+
+/** Time zone the formatters below use, whatever the machine's: an IANA name or a UTC offset. Throws when unknown. */
+export function setTimeZone(zone: string): void {
+  offsetAt = zoneOffset(zone)
+}
+
+/** `ms` shifted so its `getUTC*` fields read as the time zone's wall clock. */
+function wallClock(ms: number): Date {
+  return new Date(ms + offsetAt(ms))
+}
+
+/** `HH:MM:SS` in the configured time zone. */
 export function clock(ms: number): string {
-  const date = new Date(ms)
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  const date = wallClock(ms)
+  return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`
 }
 
-/** `YYYY-MM-DD` in local time. */
+/** `YYYY-MM-DD` in the configured time zone. */
 export function localDate(ms: number): string {
-  const date = new Date(ms)
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  const date = wallClock(ms)
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`
 }
 
-/** `YYYY-MM-DD HH:MM:SS` in local time. */
+/** `YYYY-MM-DD HH:MM:SS` in the configured time zone. */
 export function dateTime(ms: number): string {
   return `${localDate(ms)} ${clock(ms)}`
 }
 
-/** `YYYYMMDD-HHMMSS` in local time, for file names. */
+/** The configured time zone's offset at `ms`, as `UTC+08:00`. */
+export function utcOffset(ms: number): string {
+  const minutes = Math.round(offsetAt(ms) / 60_000)
+  const abs = Math.abs(minutes)
+  return `UTC${minutes < 0 ? '-' : '+'}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+}
+
+/** `YYYYMMDD-HHMMSS` in the configured time zone, for file names. */
 export function fileStamp(ms: number): string {
   return dateTime(ms).replace(/[-:]/g, '').replace(' ', '-')
 }
