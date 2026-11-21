@@ -1,4 +1,4 @@
-import type { ChatMessage, Episode } from '@laplace.live/rinnegan-sdk'
+import type { ChatMessage, Episode, TalliedSend } from '@laplace.live/rinnegan-sdk'
 import { median } from '@laplace.live/rinnegan-sdk'
 
 import type { ReportUser } from '@/report/report'
@@ -59,8 +59,8 @@ export interface GapHistogram {
   counts: number[]
   /** Gaps of `max` or longer */
   over: number
-  /** The tick of the user's `send-tick` evidence, for guide lines */
-  tickMs: number | null
+  /** Narrowest range holding half the gaps, ms: how closely the user keeps to one pace */
+  half: [number, number]
 }
 
 /** Roles and medal from a user's danmaku. */
@@ -83,16 +83,23 @@ export interface Activity {
   badges: Map<string, Badges>
   /** Every danmaku of each flagged user, oldest first, by {@link userKey} */
   danmaku: Map<string, ChatMessage[]>
+  /**
+   * How the 手动融入 tally counted each of those danmaku, for users given a history; stickers, @-replies and lone short
+   * reactions have no entry
+   */
+  tallies: Map<string, Map<ChatMessage, TalliedSend>>
 }
 
 /**
  * Timelines, send-gap histograms, badges and danmaku for the flagged `users`, and badges for the 手动融入 `copiers`;
- * `messages` sorted oldest first.
+ * `messages` sorted oldest first. `histories`: each flagged user's tallied sends by {@link userKey}, which tag their
+ * danmaku.
  */
 export function buildActivity(
   messages: readonly ChatMessage[],
   users: readonly ReportUser[],
-  copiers: readonly { roomId: number; uid: number }[] = []
+  copiers: readonly { roomId: number; uid: number }[] = [],
+  histories: ReadonlyMap<string, readonly TalliedSend[]> = new Map()
 ): Activity {
   const flagged = new Map(users.map(user => [userKey(user), user]))
   const marked = new Set(copiers.map(userKey))
@@ -116,11 +123,30 @@ export function buildActivity(
 
   const gaps = new Map<string, GapHistogram>()
   for (const user of users) {
-    const tickMs = user.evidence.find(item => item.kind === 'send-tick')?.tickMs ?? null
-    const histogram = gapHistogram(sends.get(userKey(user)) ?? [], tickMs)
+    const histogram = gapHistogram(sends.get(userKey(user)) ?? [])
     if (histogram) gaps.set(userKey(user), histogram)
   }
-  return { hosts, periods: periodsOf(messages, users, sends), gaps, badges, danmaku }
+  const tallies = new Map<string, Map<ChatMessage, TalliedSend>>()
+  for (const [key, own] of danmaku) {
+    const history = histories.get(key)
+    if (history) tallies.set(key, tag(own, history))
+  }
+  return { hosts, periods: periodsOf(messages, users, sends), gaps, badges, danmaku, tallies }
+}
+
+/** Pair each danmaku with its tally entry: both run oldest first, and the tally skips some danmaku. */
+function tag(sent: readonly ChatMessage[], history: readonly TalliedSend[]): Map<ChatMessage, TalliedSend> {
+  const tags = new Map<ChatMessage, TalliedSend>()
+  let next = 0
+  for (const message of sent) {
+    // An entry older than this danmaku matched nothing; the tally never times a send before its danmaku
+    while (next < history.length && (history[next] as TalliedSend).at < message.timestamp) next++
+    const send = history[next]
+    if (send?.at !== message.timestamp || send.text !== message.text.trim()) continue
+    tags.set(message, send)
+    next++
+  }
+  return tags
 }
 
 function badgesOf(message: ChatMessage): Badges {
@@ -192,7 +218,7 @@ function ticksOf(from: number, to: number): { at: number; label: string }[] {
   return ticks
 }
 
-function gapHistogram(times: readonly number[], tickMs: number | null): GapHistogram | null {
+function gapHistogram(times: readonly number[]): GapHistogram | null {
   if (times.length - 1 < MIN_GAPS) return null
   const gaps: number[] = []
   for (let i = 1; i < times.length; i++) gaps.push((times[i] as number) - (times[i - 1] as number))
@@ -205,5 +231,15 @@ function gapHistogram(times: readonly number[], tickMs: number | null): GapHisto
     if (bin < counts.length) counts[bin] = (counts[bin] as number) + 1
     else over++
   }
-  return { max: scale.max, binMs: scale.binMs, counts, over, tickMs }
+  return { max: scale.max, binMs: scale.binMs, counts, over, half: narrowestHalf(gaps) }
+}
+
+/** The narrowest range holding half of `values` (at least one). */
+function narrowestHalf(values: readonly number[]): [number, number] {
+  const sorted = Float64Array.from(values).sort()
+  const span = Math.max(1, Math.ceil(sorted.length / 2)) - 1
+  const width = (i: number) => (sorted[i + span] as number) - (sorted[i] as number)
+  let best = 0
+  for (let i = 1; i + span < sorted.length; i++) if (width(i) < width(best)) best = i
+  return [sorted[best] as number, sorted[best + span] as number]
 }

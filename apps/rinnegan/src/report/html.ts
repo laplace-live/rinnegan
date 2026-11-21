@@ -36,6 +36,13 @@ export interface HtmlOptions {
 
 const REPO_URL = 'https://github.com/laplace-live/rinnegan'
 
+/**
+ * 打码: a switch that blurs every `.pii` for screenshots, through CSS alone. WebKit ignores CSS `blur()` on SVG, so the
+ * chart's names take the SVG filter.
+ */
+const MASK_SWITCH = `<label class="mask" title="模糊观众的用户名和 UID，方便截图分享"><input type="checkbox" id="mask" role="switch"><span class="knob" aria-hidden="true"></span>打码</label>
+<svg class="defs" aria-hidden="true"><filter id="pii-blur" x="-20%" y="-60%" width="140%" height="220%"><feGaussianBlur stdDeviation="4"/></filter></svg>`
+
 /** Times within one line of text, which dates its first time and any later one on a new day. */
 interface LineClock {
   minute(ms: number): string
@@ -54,7 +61,8 @@ interface Context {
   at: Clock
   /** Flagged users and 手动融入 viewers by {@link userKey}, for the links between their cards and entries */
   flaggedByKey: Map<string, ReportUser>
-  manualByKey: Map<string, ManualBlend>
+  /** With each viewer's place in the 手动融入 list, from 1 */
+  manualByKey: Map<string, { blend: ManualBlend; n: number }>
 }
 
 /** The parts of a 手动融入 viewer's text danmaku, by CSS class. */
@@ -66,6 +74,26 @@ const TILE_LABELS = { ...VERDICT_LABELS, manual: '手动融入' }
 
 function chip(label: string): string {
   return `<span class="cp">${label}</span>`
+}
+
+/** Markup that 打码 blurs: a viewer's name or UID. */
+function pii(html: string): string {
+  return `<span class="pii">${html}</span>`
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** {@link danmaku}, with each of the viewer `names` it quotes hidden by 打码. */
+function named(text: string, names: readonly string[] = []): string {
+  // Longest first, so a name that holds another is wrapped whole
+  const found = names.filter(Boolean).sort((a, b) => b.length - a.length)
+  if (found.length === 0) return danmaku(text)
+  return text
+    .split(new RegExp(`(${found.map(escapeRegExp).join('|')})`))
+    .map((part, i) => (i % 2 === 1 ? pii(danmaku(part)) : danmaku(part)))
+    .join('')
 }
 
 /** Escaped danmaku with tool-inserted invisible chars as `U+00AD` chips; a run of one char collapses to `×n`. */
@@ -108,13 +136,14 @@ function nowrap(html: string): string {
   return `<span class="nowrap">${html}</span>`
 }
 
-function cardId(user: { roomId: number; uid: number }): string {
-  return `u-${user.roomId}-${user.uid}`
+/** Anchors go by rank, not UID, which 打码 would leave in the address bar. */
+function cardId(user: ReportUser): string {
+  return `u-${user.rank}`
 }
 
-/** Anchor of a viewer's 手动融入 entry. */
-function manualId(user: { roomId: number; uid: number }): string {
-  return `m-${user.roomId}-${user.uid}`
+/** Anchor of the `n`th 手动融入 entry. */
+function manualId(n: number): string {
+  return `m-${n}`
 }
 
 /** What the room-wide traffic line counts. */
@@ -144,7 +173,7 @@ export function renderHtml(report: OfflineReport, activity: Activity, options: H
     options,
     at: clockFor(report.archive.from, report.archive.to),
     flaggedByKey: new Map(report.users.map(user => [userKey(user), user])),
-    manualByKey: new Map(report.manualBlends.map(blend => [userKey(blend), blend])),
+    manualByKey: new Map(report.manualBlends.map((blend, i) => [userKey(blend), { blend, n: i + 1 }])),
   }
   const title = [roomsTitle(ctx), datesTitle(ctx)].filter(Boolean).join(' · ')
   const flagged = report.users.length > 0
@@ -161,6 +190,7 @@ ${STYLE}</style>
 <noscript><style>.chart { display: none; }</style></noscript>
 </head>
 <body>
+${MASK_SWITCH}
 ${header(ctx)}
 <main class="wrap">
 ${tiles(ctx)}
@@ -319,15 +349,15 @@ ${allDanmaku(ctx, user)}
 
 /** Name, UID link and badges, after the `rank` markup when there is one. */
 function who({ activity }: Context, user: { roomId: number; uid: number; uname: string }, rank = ''): string {
-  const uid = link(`https://space.bilibili.com/${user.uid}`, `UID ${user.uid}`, 'uid')
-  return `<div class="who">${rank}<h3>${Bun.escapeHTML(nameOf(user))}</h3>${uid}${badges(activity.badges.get(userKey(user)))}</div>`
+  const uid = link(`https://space.bilibili.com/${user.uid}`, `UID ${pii(String(user.uid))}`, 'uid')
+  return `<div class="who">${rank}<h3 class="pii">${Bun.escapeHTML(nameOf(user))}</h3>${uid}${badges(activity.badges.get(userKey(user)))}</div>`
 }
 
 /** A flagged user's 手动融入 mark, linking to their entry in that list. */
 function manualNote({ manualByKey }: Context, user: ReportUser): string {
-  const blend = manualByKey.get(userKey(user))
-  if (!blend) return ''
-  return `<p class="manual-note"><a href="#${manualId(user)}"><b>手动融入</b></a>${describeCopying(blend)}</p>`
+  const entry = manualByKey.get(userKey(user))
+  if (!entry) return ''
+  return `<p class="manual-note"><a href="#${manualId(entry.n)}"><b>手动融入</b></a>${describeCopying(entry.blend)}</p>`
 }
 
 function badges(found: Badges | undefined): string {
@@ -368,17 +398,34 @@ function evidence(user: ReportUser): string {
   if (user.evidence.length === 0) return ''
   const items = user.evidence.map(
     item =>
-      `<li><span class="ev-l">${EVIDENCE_LABELS[item.kind]}</span><span class="ev-w">${item.weight.toFixed(2)}</span><span class="ev-d">${danmaku(item.detail)}</span></li>`
+      `<li><span class="ev-l">${EVIDENCE_LABELS[item.kind]}</span><span class="ev-w">${item.weight.toFixed(2)}</span><span class="ev-d">${named(item.detail, item.names)}</span></li>`
   )
   return `<ul class="evidence">${items.join('')}</ul>`
 }
 
+/** Seconds as a viewer would say them: `1.2`, or `31` from 10 s up. */
+function seconds(ms: number): string {
+  return ms < 9950 ? (ms / 1000).toFixed(1) : String(Math.round(ms / 1000))
+}
+
+/** `1.1–2.0 秒`, or `6.3 秒左右` when both ends round alike. */
+function secondsRange([from, to]: readonly [number, number]): string {
+  const [a, b] = [seconds(from), seconds(to)]
+  return a === b ? `${a} 秒左右` : `${a}–${b} 秒`
+}
+
+/** How far apart the user's danmaku were, in words a streamer reads without a key. */
 function gapFigure(user: ReportUser, gaps: GapHistogram): string {
-  const caption = [`相邻两条弹幕的间隔，0–${gaps.max} 秒，每格 ${gaps.binMs / 1000} 秒。`]
-  if (gaps.tickMs) caption.push(`浅色竖线是 Rinnegan 拟合的 ${Math.round(gaps.tickMs / 10) / 100} 秒发送节拍的整数倍。`)
-  if (gaps.over > 0) caption.push(`另有 ${count(gaps.over)} 个更长的间隔未显示。`)
-  const label = Bun.escapeHTML(`${nameOf(user)} 的发送间隔分布`)
-  return `<figure class="fig inset"><div class="chart" data-gaps="${userKey(user)}" data-label="${label}"></div><figcaption>${caption.join('')}</figcaption></figure>`
+  const caption = [
+    '柱子越高，和上一条隔这么久的弹幕越多。手动发弹幕时快时慢，柱子会摊成一片；工具定时发送，间隔几乎一样，柱子会挤成又高又窄的几根。',
+  ]
+  if (user.pattern === 'blend') caption.push('跟风机器人跟着房间里的热门内容发，间隔随大家而变，不一定整齐。')
+  if (gaps.over > 0) caption.push(`另有 ${count(gaps.over)} 条和上一条隔了 ${gaps.max} 秒以上，没有画出。`)
+  return `<figure class="fig inset">
+<div class="fig-h"><h4>隔多久发一条</h4><p class="sub">一半的弹幕和上一条隔 <strong>${secondsRange(gaps.half)}</strong></p></div>
+<div class="chart" data-gaps="${userKey(user)}" data-label="隔多久发一条"></div>
+<figcaption>${caption.join('')}</figcaption>
+</figure>`
 }
 
 /** One danmaku in a list; `note` is markup that follows the text. No `datetime`: lists run to tens of thousands of rows. */
@@ -386,9 +433,9 @@ function row(at: Clock, ms: number, text: string, note = ''): string {
   return `<li><time>${at.second(ms)}</time><span>${danmaku(text)}${note}</span></li>`
 }
 
-/** A note after a danmaku, led by a dot in `kind`'s copy bar color when given. */
-function via(text: string, kind?: CopyKind): string {
-  return `<span class="via">${kind ? `<i class="kind ${kind}"></i>` : ''}${Bun.escapeHTML(text)}</span>`
+/** A note after a danmaku, led by a dot in `kind`'s copy bar color when given; `html` is markup. */
+function via(html: string, kind?: CopyKind): string {
+  return `<span class="via${kind ? ` ${kind}` : ''}">${html}</span>`
 }
 
 /** Rows behind a summary, closed until clicked; nothing without rows. */
@@ -412,10 +459,20 @@ function lines({ at }: Context, user: ReportUser): string {
   return `<div class="lines">${blocks.join('')}</div>`
 }
 
-/** Every danmaku the user sent in the archive. */
+/** Every danmaku the user sent in the archive, tagged as the 手动融入 list tags them when the tally was kept. */
 function allDanmaku({ activity, at }: Context, user: ReportUser): string {
   const sent = activity.danmaku.get(userKey(user)) ?? []
-  const rows = sent.map(message => row(at, message.timestamp, message.text, message.isEmote ? via('表情') : ''))
+  const tags = activity.tallies.get(userKey(user))
+  const rows = sent.map(message => {
+    const send = tags?.get(message)
+    let note = ''
+    if (send) note = tally(send)
+    else if (message.isEmote) note = via('表情')
+    else if (message.isReply) note = via('回复')
+    // All the tally skips besides: a lone short reaction such as 「？」
+    else if (tags) note = via('短句')
+    return row(at, message.timestamp, message.text, note)
+  })
   return collapsed(`全部 ${count(rows.length)} 条弹幕`, rows)
 }
 
@@ -430,12 +487,13 @@ function manualBlends(ctx: Context): string {
 <p class="sec-intro">弹幕大多是复读别人（跟队形或 +1），也会自己说话，看不出用了工具。只标记，不处置：实时模式不会因此封禁或豁免任何人。按复读条数排序，色条是每人文字弹幕的构成。</p>
 <div class="legend">${legend.join('')}</div>
 <ol class="manual">
-${blends.map(blend => manualEntry(ctx, blend)).join('\n')}
+${blends.map((blend, i) => manualEntry(ctx, blend, i + 1)).join('\n')}
 </ol>
 </section>`
 }
 
-function manualEntry(ctx: Context, blend: ManualBlend): string {
+/** The `n`th viewer in the 手动融入 list. */
+function manualEntry(ctx: Context, blend: ManualBlend, n: number): string {
   const { report, at, flaggedByKey } = ctx
   const user = flaggedByKey.get(userKey(blend))
   const pill = user
@@ -443,7 +501,7 @@ function manualEntry(ctx: Context, blend: ManualBlend): string {
     : ''
   const room = report.archive.rooms.length > 1 ? `房间 ${blend.roomId} · ` : ''
   const rows = (blend.history ?? []).map(send => row(at, send.at, send.text, tally(send)))
-  return `<li id="${manualId(blend)}">
+  return `<li id="${manualId(n)}">
 <div class="card-h">${who(ctx, blend)}${pill}</div>
 ${copyBar(blend)}
 <p class="facts">${room}${describeCopying(blend)}</p>
@@ -454,7 +512,10 @@ ${collapsed(`全部 ${count(rows.length)} 条文字弹幕`, rows)}
 /** How a counted send was made, marked in its part of the copy bar's color. */
 function tally(send: TalliedSend): string {
   if (send.senders === 0) return via(COPY_KINDS.own, 'own')
-  return via(copyNote(send), 'from' in send ? 'plus-one' : 'chant')
+  return via(
+    copyNote(send, from => pii(Bun.escapeHTML(from))),
+    'from' in send ? 'plus-one' : 'chant'
+  )
 }
 
 /** A viewer's text danmaku as chants, +1s and lines of their own; the section's legend names the parts. */
@@ -479,51 +540,47 @@ function notes({ report }: Context): string {
   return `<section aria-labelledby="h-notes" class="foot">
 <h2 id="h-notes">说明</h2>
 <p>分数 0–100，由 ${windowMs / 60_000} 分钟检测窗口内的重复次数与自动化证据（不可见字符、固定节拍、发送节拍、模板轮播、跟风触发、多号同步等）算出。分数 ≥ ${spamScore} 且自动化证据 ≥ ${minAutomation} 判为独轮车，≥ ${suspectScore} 为可疑；单纯的重复（刷屏量）不算自动化证据。</p>
-<p>每位用户的模式、证据和样本取自其分数最高的时刻，点开每条内容可看样本，点开「全部弹幕」可看其在归档里发的每一条；标记时段是分数保持在可疑及以上的连续时间。工具插入的不可见字符显示为 ${chip('U+00AD')} 这样的编号。</p>
-<p>手动融入按整场统计，不看检测窗口：文字弹幕大多是复读别人刚发过的内容，换内容时也常换成自己说的，且整场没出现用工具的迹象。点开「全部文字弹幕」可看每条算作跟队形、+1 还是自己说的；表情、@ 回复和单独发的一两个字（如「？」）不计入。</p>
+<p>每位用户的模式、证据和样本取自其分数最高的时刻，点开每条内容可看样本，点开「全部弹幕」可看其在归档里发的每一条，和手动融入一样标出跟队形、+1 还是自己说的（表情、@ 回复和短句除外）；标记时段是分数保持在可疑及以上的连续时间。工具插入的不可见字符显示为 ${chip('U+00AD')} 这样的编号。</p>
+<p>手动融入按整场统计，不看检测窗口：文字弹幕大多是复读别人刚发过的内容，换内容时也常换成自己说的，且整场没出现用工具的迹象。点开「全部文字弹幕」可看每条算作跟队形、+1 还是自己说的；表情、@ 回复和单独发的短句（如「？」「哈哈哈」）不计入。</p>
+<p>右下角的「打码」会模糊观众的用户名和 UID（主播名和房间号照常显示），方便截图分享。它只改变显示，用户名和 UID 仍在 HTML 文件里，直接分享文件就等于分享全部内容。</p>
 <p>时间为 ${report.archive.messages > 0 ? utcOffsets(report.archive.from, report.archive.to) : utcOffset(generatedAt)}。本报告是单个 HTML 文件，离线也能打开。由 ${link(REPO_URL, Bun.escapeHTML(report.tool))} 生成于 ${dateTime(generatedAt)}。</p>
 </section>`
 }
 
+/** A lane's tooltip after the name, which the chart script shows apart so 打码 can blur it. */
 function laneTip(lane: Lane, at: Clock): string {
-  const name = nameOf(lane)
   const first = lane.sends[0]
   const last = lane.sends.at(-1)
-  if (first === undefined || last === undefined) return `${name} · 本时段没有弹幕`
-  return `${name} · 本时段 ${count(lane.sends.length)} 条弹幕 · ${at.line().range(first, last)}`
+  if (first === undefined || last === undefined) return '本时段没有弹幕'
+  return `本时段 ${count(lane.sends.length)} 条弹幕 · ${at.line().range(first, last)}`
 }
 
 /** What the chart script draws; times are seconds from each period's start. */
-function clientData({ report, activity, at }: Context) {
+function clientData({ report, activity, at, flaggedByKey }: Context) {
   return {
     room: roomScope(report),
     periods: activity.periods.map(period => {
-      const seconds = (ms: number) => Math.round((Math.min(Math.max(ms, period.from), period.to) - period.from) / 1000)
+      const offset = (ms: number) => Math.round((Math.min(Math.max(ms, period.from), period.to) - period.from) / 1000)
       return {
         span: (period.to - period.from) / 1000,
         bucket: period.bucketMs / 1000,
         unit: perBucket(period.bucketMs),
         counts: period.counts,
         ticks: period.ticks.map(tick => [(tick.at - period.from) / 1000, tick.label]),
-        lanes: period.lanes.map(lane => ({
-          href: `#${cardId(lane)}`,
-          name: nameOf(lane),
-          sends: lane.sends.map(seconds),
-          flagged: lane.episodes.map(episode => [seconds(episode.startAt), seconds(episode.endAt), episode.verdict]),
-          tip: laneTip(lane, at),
-        })),
+        lanes: period.lanes.map(lane => {
+          const user = flaggedByKey.get(userKey(lane))
+          return {
+            href: user ? `#${cardId(user)}` : '#',
+            name: nameOf(lane),
+            sends: lane.sends.map(offset),
+            flagged: lane.episodes.map(episode => [offset(episode.startAt), offset(episode.endAt), episode.verdict]),
+            tip: laneTip(lane, at),
+          }
+        }),
       }
     }),
     gaps: Object.fromEntries(
-      [...activity.gaps].map(([key, gaps]) => [
-        key,
-        {
-          max: gaps.max,
-          bin: gaps.binMs / 1000,
-          counts: gaps.counts,
-          tick: gaps.tickMs === null ? null : gaps.tickMs / 1000,
-        },
-      ])
+      [...activity.gaps].map(([key, gaps]) => [key, { max: gaps.max, bin: gaps.binMs / 1000, counts: gaps.counts }])
     ),
   }
 }

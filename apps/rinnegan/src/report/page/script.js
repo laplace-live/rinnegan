@@ -83,7 +83,7 @@
       const y0 = rowsTop + i * rowH
       const cy = y0 + 7
       const link = mk('a', { href: lane.href }, svg)
-      text(link, nameW, cy + 4, fit(lane.name, nameW - 4, 11.5), 'tx ink', 'end')
+      text(link, nameW, cy + 4, fit(lane.name, nameW - 4, 11.5), 'tx ink pii', 'end')
       mk('line', { x1: x0, x2: x1, y1: cy, y2: cy, class: 'grid' }, svg)
       const bins = new Map()
       for (const s of lane.sends) {
@@ -100,13 +100,22 @@
       }
       mk(
         'rect',
-        { x: x0, y: y0 - 3, width: x1 - x0, height: rowH, class: 'hit', tabindex: 0, 'data-tip': lane.tip },
+        {
+          x: x0,
+          y: y0 - 3,
+          width: x1 - x0,
+          height: rowH,
+          class: 'hit',
+          tabindex: 0,
+          'data-tip-name': lane.name,
+          'data-tip': lane.tip,
+        },
         svg
       )
     })
   }
 
-  // Gaps between one user's consecutive danmaku; guides mark multiples of the send tick Rinnegan fitted.
+  // How long after their previous danmaku each of one user's danmaku came, as bars of danmaku counts.
   function histogram(host) {
     const gaps = data.gaps[host.dataset.gaps]
     const W = host.clientWidth
@@ -120,18 +129,13 @@
     const x = s => x0 + (s / gaps.max) * (x1 - x0)
     const peak = Math.max(1, ...gaps.counts)
     const y = c => axisY - (c / peak) * (axisY - top)
-    const digits = gaps.bin < 0.5 ? 2 : gaps.bin < 1 ? 1 : 0
+    // 0.2 s bins read 2.0–2.2, 0.25 s ones 6.00–6.25
+    const digits = Number.isInteger(gaps.bin) ? 0 : Number.isInteger(gaps.bin * 10) ? 1 : 2
     const svg = canvas(host, W, H)
-    if (gaps.tick) {
-      for (let k = 1; k * gaps.tick < gaps.max; k++) {
-        const gx = x(k * gaps.tick)
-        mk('line', { x1: gx, x2: gx, y1: top - 8, y2: axisY, class: 'guide' }, svg)
-      }
-    }
     gaps.counts.forEach((c, i) => {
       if (!c) return
       const lo = i * gaps.bin
-      const tip = `${lo.toFixed(digits)}–${(lo + gaps.bin).toFixed(digits)} 秒 · ${c} 个间隔`
+      const tip = `${c} 条弹幕和上一条隔 ${lo.toFixed(digits)}–${(lo + gaps.bin).toFixed(digits)} 秒`
       const g = mk('g', { tabindex: 0, 'data-tip': tip }, svg)
       mk('rect', { x: x0 + i * step, y: top - 8, width: step, height: axisY - top + 8, class: 'hit' }, g)
       mk('path', { d: roundTop(x0 + i * step + 0.5, y(c), Math.max(1, step - 1), axisY - y(c)), class: 'm-bar' }, g)
@@ -141,9 +145,11 @@
     for (let v = 0; v <= gaps.max; v += every) {
       text(svg, x(v), axisY + 16, `${v} 秒`, 'tx', v === 0 ? 'start' : v === gaps.max ? 'end' : 'middle')
     }
+    const label = `${peak} 条`
+    const half = width(label, 11.5) / 2
     const pi = gaps.counts.indexOf(peak)
-    const px = Math.min(x1 - 10, Math.max(x0 + 10, x0 + (pi + 0.5) * step))
-    text(svg, px, y(peak) - 5, String(peak), 'tx ink', 'middle')
+    const px = Math.min(x1 - half, Math.max(x0 + half, x0 + (pi + 0.5) * step))
+    text(svg, px, y(peak) - 5, label, 'tx ink', 'middle')
   }
 
   const render = () => {
@@ -163,7 +169,16 @@
   const tip = document.getElementById('tip')
   if (!tip) return
   const show = (target, cx, cy) => {
-    tip.textContent = target.getAttribute('data-tip')
+    tip.textContent = ''
+    // A viewer's name goes in its own span, which 打码 blurs
+    const name = target.getAttribute('data-tip-name')
+    if (name) {
+      const span = document.createElement('span')
+      span.className = 'pii'
+      span.textContent = name
+      tip.append(span, ' · ')
+    }
+    tip.append(target.getAttribute('data-tip') || '')
     tip.hidden = false
     const r = tip.getBoundingClientRect()
     let left = cx + 12

@@ -131,7 +131,8 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
     log(`AI 复核 ${config.ai.mode === 'confirm' ? '（封禁前确认）' : '（辅助升级可疑用户）'} ${reviewer.label}`)
   }
 
-  const detector = new Detector(config.detector)
+  // Nothing live reads the 手动融入 history, which would grow for as long as the session runs
+  const detector = new Detector({ manualHistory: false, ...config.detector })
   const enforcer = new Enforcer({
     ban: config.ban,
     dryRunReason,

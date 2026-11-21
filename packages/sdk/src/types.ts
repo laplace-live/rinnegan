@@ -57,6 +57,8 @@ export interface Evidence {
   detail: string
   /** Send-queue tick (ms) a `send-tick` item fitted */
   tickMs?: number
+  /** Other viewers' names that `detail` quotes, so a report can hide them */
+  names?: string[]
 }
 
 export interface Sample {

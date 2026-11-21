@@ -1,5 +1,6 @@
 import { mkdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
+import type { TalliedSend } from '@laplace.live/rinnegan-sdk'
 import { Detector, extractMessages } from '@laplace.live/rinnegan-sdk'
 
 import type { RinneganConfig } from '@/config'
@@ -8,7 +9,7 @@ import { AuditLog } from '@/audit/audit'
 import { banEligibility } from '@/enforce/policy'
 import { buildActivity } from '@/report/activity'
 import { renderHtml } from '@/report/html'
-import { buildReport, renderConsole, renderMarkdown } from '@/report/report'
+import { buildReport, renderConsole, renderMarkdown, userKey } from '@/report/report'
 import { readArchive } from '@/sources/archive'
 import { count, fileStamp, log, style } from '@/util/console'
 import { VERSION } from '@/version'
@@ -48,8 +49,7 @@ export async function runOffline(options: OfflineOptions): Promise<number> {
     { rooms: config.live.rooms, since: options.since, until: options.until, includeMirror: config.live.includeMirror }
   )
 
-  // The HTML and JSON reports list every danmaku the 手动融入 tally counted
-  const detector = new Detector({ ...config.detector, manualHistory: options.writeFiles })
+  const detector = new Detector(config.detector)
   for (const message of messages) detector.ingest(message)
   const summaries = detector.summaries()
 
@@ -97,7 +97,9 @@ export async function runOffline(options: OfflineOptions): Promise<number> {
     const jsonPath = join(config.reportDir, `${name}.json`)
     const markdownPath = join(config.reportDir, `${name}.md`)
     const htmlPath = join(config.reportDir, `${name}.html`)
-    const html = renderHtml(report, buildActivity(messages, report.users, report.manualBlends), {
+    const histories = new Map<string, TalliedSend[]>()
+    for (const summary of summaries) if (summary.history) histories.set(userKey(summary), summary.history)
+    const html = renderHtml(report, buildActivity(messages, report.users, report.manualBlends, histories), {
       archives: options.files.map(file => basename(file)),
     })
     await Bun.write(jsonPath, `${JSON.stringify(report, null, 2)}\n`)

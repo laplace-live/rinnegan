@@ -238,9 +238,9 @@ function plusOneCell(blend: ManualBlend): string {
   return plusOnes > 0 ? `${plusOnes}（${blend.sources} 人）` : '0'
 }
 
-/** How a copy was made: `跟 22 人一起刷`, or `复读 路人，晚 5.6s` for a +1. */
-export function copyNote(sample: CopySample): string {
-  return 'from' in sample ? `复读 ${sample.from}，晚 ${formatGap(sample.lagMs)}` : `跟 ${sample.senders} 人一起刷`
+/** How a copy was made: `跟 22 人一起刷`, or `复读 路人，晚 5.6s` for a +1, with `name` rendering whose line it was. */
+export function copyNote(sample: CopySample, name: (from: string) => string = from => from): string {
+  return 'from' in sample ? `复读 ${name(sample.from)}，晚 ${formatGap(sample.lagMs)}` : `跟 ${sample.senders} 人一起刷`
 }
 
 function copySample(sample: CopySample): string {
