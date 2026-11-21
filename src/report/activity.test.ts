@@ -62,6 +62,7 @@ function flagged(uid: number, patch: Partial<ReportUser> = {}): ReportUser {
     clusters: [],
     episodes: [],
     exempt: null,
+    manualBlend: false,
     ...patch,
   }
 }

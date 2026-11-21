@@ -31,16 +31,17 @@ Repetition alone never triggers a ban. During hype moments, real viewers manuall
 times—the archive used to calibrate Rinnegan has hundreds of viewers doing just that. A ban requires **repetition plus
 proof of automation**:
 
-| Evidence     | What it catches                                                                                                                                                                                                                       |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 不可见字符   | Chatterbox 随机字符 / 路怒 / AI规避 modes inserting U+00AD, U+200B–U+200D, U+2060, U+FEFF, tag chars (U+E0020…), or blank fillers at shifting positions. Copying another viewer's obfuscated message (+1) is ignored.                 |
-| 发送节拍     | Chatterbox's 1 s default loop ticks every ~1.3 s (1010 ms queue gap + latency); Bilibili silently drops identical resends within ~5 s, so accepted sends land at multiples of ~1.3 s (5.2 / 6.5 / 7.8 s). Fitted per window and session. |
-| 固定节拍     | `setInterval`-style loops (6 s, 8.2 s, 10 s…), tolerant of skipped beats. Intervals near Bilibili's 5 s duplicate cooldown require a longer, tighter streak, since a human resending as soon as the cooldown clears looks regular too.  |
-| 重复次数抖动 | Burst tools that vary how many times a phrase is repeated per send (`爆了爆了爆了…`) to bypass deduplication.                                                                                                                          |
-| 机器速度     | Sustaining the same line at ≤ 2.5 s intervals for 20+ sends—something Bilibili's filter only lets through when every send is mutated.                                                                                                 |
-| 模板轮播     | Cycling through multiple lines on a single timer (multi-line templates or long text split into chunks).                                                                                                                               |
-| 插入字符     | Inserting a custom visible character (随机字符) at shifting positions.                                                                                                                                                                |
-| 跟风触发     | Chatterbox 自动融入 (auto-blend): whenever the sender switches lines, the new line is the exact one that first reached 3 sends across 3 users after the bot's cooldown (see below).                                                    |
+| Evidence     | What it catches                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 不可见字符   | Chatterbox 随机字符 / 路怒 / AI规避 modes inserting U+00AD, U+200B–U+200D, U+2060, U+FEFF, tag chars (U+E0020…), or blank fillers at shifting positions, whether into one looped line or into each trending line 自动融入 copies. Copying another viewer's obfuscated message (+1) is ignored, and so are joiners inside Persian or Indic words and bidi marks in right-to-left text. |
+| 发送节拍     | Chatterbox's 1 s default loop ticks every ~1.3 s (1010 ms queue gap + latency); Bilibili silently drops identical resends within ~5 s, so accepted sends land at multiples of ~1.3 s (5.2 / 6.5 / 7.8 s). Fitted per window and session.                                                                                                                                              |
+| 固定节拍     | `setInterval`-style loops (6 s, 8.2 s, 10 s…), tolerant of skipped beats. Intervals near Bilibili's 5 s duplicate cooldown require a longer, tighter streak, since a human resending as soon as the cooldown clears looks regular too.                                                                                                                                                |
+| 重复次数抖动 | Burst tools that vary how many times a phrase is repeated per send (`爆了爆了爆了…`) to bypass deduplication.                                                                                                                                                                                                                                                                         |
+| 机器速度     | Sustaining the same line at ≤ 2.5 s intervals for 20+ sends—something Bilibili's filter only lets through when every send is mutated.                                                                                                                                                                                                                                                 |
+| 模板轮播     | Cycling through multiple lines on a single timer (multi-line templates or long text split into chunks).                                                                                                                                                                                                                                                                               |
+| 插入字符     | Inserting a custom visible character (随机字符) at shifting positions.                                                                                                                                                                                                                                                                                                                |
+| 跟风触发     | Chatterbox 自动融入 (auto-blend): whenever the sender switches lines, the new line is the exact one that first reached 3 sends across 3 users after the bot's cooldown (see below).                                                                                                                                                                                                   |
+| 多号同步     | Several accounts running 自动融入 at once: they answer the same trigger, so each switches lines a steady few milliseconds from another account (see below).                                                                                                                                                                                                                           |
 
 Because 自动融入 copies whatever the room is already chanting—at times dictated by the chat itself—running it without
 随机字符 leaves none of the character or timer signatures above. Even so, its behavior is strictly deterministic: a
@@ -55,6 +56,16 @@ multiple trends qualified before the send. Without that check, in a room with on
 setting predicts the same phrase and a human joining each chant by hand would match just as well as the bot. At ≥ 60%
 coverage with 8 hits (including 3 cooldown skips), it counts as partial evidence.
 
+That check holds back a lone bot in a one-chant room, but not a swarm: several accounts running 自动融入 fire on the
+same message, each after its own steady latency, so they switch to the same line a fixed few milliseconds apart. Rinnegan
+pairs accounts that switch to the same trending line within 1.5 s and bans when a pair keeps one offset (under 400 ms,
+±150 ms) on at least 9 switches and 80% of their shared ones in the window. Viewers joining the same chants by hand land
+seconds apart; simulated hand-chasers whose reaction times crowd around a bot's latency reached 8 of 9 by chance, but
+none of 150 reached the gate against a real swarm. A viewer whose send completes a trigger sits a second ahead of every
+bot that answers it, so the offset limit leaves them out. An account that only ever sends first gets this evidence at
+half weight unless other automation evidence backs it: a copier answering a viewer within 400 ms would pair with that
+viewer just the same, so timing alone can only ban the account that follows.
+
 Incoming messages are canonicalized first (NFKC, case, punctuation, invisible characters, repeated phrases with
 truncated tails, and character runs) and clustered per user within a small edit-distance budget, so variations of the
 same line are counted together. Phrases spammed by much of the room reduce the weight of raw repetition, but never
@@ -65,9 +76,19 @@ Detected patterns: `loop` 循环独轮车, `burst` 爆发刷屏, `template` 模�
 other trend-following bots, whether character-jittered or trigger-timed), and `flood` 高频重复 (high-frequency
 repetition without automation evidence—reported, never banned).
 
+Viewers who mostly copy the room by hand are marked 手动融入. Over the session, at least 20 of their text danmaku repeat
+a line someone else sent in the minute before (a chant 3+ others were sending, or a +1 of one viewer's line), and those
+copies make up at least half of their text. At least 20% of their line changes also go to lines nobody else had just
+sent, and none of their assessments found automation proof of 0.5 or more. One- and two-character reactions such as
+「？」 count only as part of a chant. Accounts left to 自动融入 write almost nothing of their own (under 12% of line
+changes on both archives), so they never qualify. The mark only labels a habit: the console, Markdown and JSON reports
+list these viewers and tag flagged ones, live mode tags the suspect lines `--verbose` prints and lists them in the
+`session-end` audit event, and it never bans or exempts anyone.
+
 ### Accuracy
 
-Calibrated against a real 89,970-message archive (5,725 users) and validated against simulated Chatterbox traffic:
+Calibrated against a real 89,970-message archive (5,725 users), checked against a second one (34,043 messages from a
+November 2026 stream day), and validated against simulated Chatterbox traffic:
 - Every Chatterbox evasion mode is caught in simulation: all invisible-character presets, throttled identical loops,
   fixed and random intervals with 随机字符, multi-line templates, split long lines, custom visible characters,
   paraphrase cycling, keyword replacement, Copy Ninja mirrors, and repeat-count burst tools. A random-interval loop
@@ -81,9 +102,19 @@ Calibrated against a real 89,970-message archive (5,725 users) and validated aga
   mechanical ones topping out at `suspect`.
 - 0 of 1,000 simulated long human sessions and 0 of 300 mixed-room simulations reached `spam`; +1 copiers, check-in
   bots, and sticker-panel sweeps all stay below the threshold.
-- On the real archive, all 41 users flagged as `spam` were manually verified (including 5 trend-following bots caught
-  only by the 自动融入 replay), while known edge cases (a fan who copy-pasted a bot's line, heavy +1 users, the
-  streamer, and check-in bots) were left untouched. Detection runs at ~80k messages/s.
+- On the calibration archive, 55 users are flagged as `spam`: the 41 verified by hand (including 5 trend-following bots
+  caught only by the 自动融入 replay), plus 14 自动融入 accounts the replay had held at `suspect`, caught by 多号同步 (13)
+  or by 随机字符 across copied lines (1) and each confirmed by its timing against the rest of the swarm. Two more swarm
+  accounts stay at `suspect` because they only ever send ahead of their partner. Known edge cases (a fan who
+  copy-pasted a bot's line, heavy +1 users, the streamer, and check-in bots) are left untouched.
+- On the November stream day, all 11 users flagged as `spam` were confirmed automated by a review of raw timing and
+  content done without the detector, including 7 accounts of a 自动融入 swarm; an eighth, which only ever sends ahead
+  of its partner, stays at `suspect`. The heavy chatters, check-in routines, and the streamer stay below `spam`. Three
+  自动融入 accounts set to trigger at 10 senders instead of 3 are still missed.
+- 手动融入 marks 9 viewers on the November stream day, including a heavy +1 user checked by hand, and 120 on the
+  chant-heavy calibration archive. Neither archive has a marked account that was found automated.
+
+Detection runs at ~50k messages/s.
 
 Timing thresholds are derived by bootstrapping real human inter-message gaps (200k resamples) and set above the highest
 false-positive match.
@@ -169,10 +200,11 @@ rinnegan offline a.lca b.lca --room 25034104 --since '2026-10-20 20:00' --top 50
 
 Accepts gzip- and zstd-compressed `.lca` archives as well as raw JSON exports (pre-2026 lz-string archives must be
 re-exported from a current build of LAPLACE Chat). Prints detected spammers followed by suspects—with evidence and
-message samples (rendering invisible characters like `⟨U+00AD⟩`)—and writes JSON, Markdown, and HTML reports to
-`reports/` (`--no-report` to skip). `--since` / `--until` are read, and all times shown, in China Standard Time
-(UTC+8) whatever the machine's time zone; `--timezone` (`RINNEGAN_TIMEZONE`, `timeZone` in the config) takes an IANA
-name such as `America/Los_Angeles` or an offset such as `UTC-8` instead.
+message samples (rendering invisible characters like `⟨U+00AD⟩`)—then viewers marked 手动融入 with what they copied and
+from whom, and writes JSON, Markdown, and HTML reports to `reports/` (`--no-report` to skip; `--spam-only` prints
+spammers alone). `--since` / `--until` are read, and all times shown, in China Standard Time (UTC+8) whatever the
+machine's time zone; `--timezone` (`RINNEGAN_TIMEZONE`, `timeZone` in the config) takes an IANA name such as
+`America/Los_Angeles` or an offset such as `UTC-8` instead.
 
 The HTML report is a single self-contained file: styles, charts, and data are inline and nothing loads from the
 network, so it opens offline in any modern browser and can be shared as is. Next to each flagged user's evidence and

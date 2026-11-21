@@ -46,6 +46,15 @@ export class CrowdIndex {
     return senders.size - (senders.has(uid) ? 1 : 0)
   }
 
+  /** The user other than `uid` who sent `key` in the room most recently within the window, and when. */
+  latest(roomId: number, key: string, uid: number): { uid: number; at: number } | null {
+    let found: { uid: number; at: number } | null = null
+    for (const [sender, at] of this.#senders.get(`${roomId}\u0000${key}`) ?? []) {
+      if (sender !== uid && (!found || at > found.at)) found = { uid: sender, at }
+    }
+    return found
+  }
+
   #expire(now: number): void {
     const cutoff = now - this.#windowMs
     while (this.#head < this.#queue.length) {

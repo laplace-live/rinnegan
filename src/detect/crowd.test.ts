@@ -24,6 +24,17 @@ describe('CrowdIndex', () => {
     expect(crowd.others(1, '爆了', 99)).toBe(1)
   })
 
+  test('finds the latest other sender of a key', () => {
+    const crowd = new CrowdIndex(60_000)
+    crowd.add(1, '爆了', 10, 0)
+    crowd.add(1, '爆了', 11, 1000)
+    crowd.add(1, '爆了', 12, 2000)
+    expect(crowd.latest(1, '爆了', 12)).toEqual({ uid: 11, at: 1000 })
+    expect(crowd.latest(1, '爆了', 99)).toEqual({ uid: 12, at: 2000 })
+    expect(crowd.latest(1, '无语', 99)).toBeNull()
+    expect(crowd.latest(2, '爆了', 99)).toBeNull()
+  })
+
   test('recognizes copies of a jittered raw text', () => {
     const crowd = new CrowdIndex(60_000)
     crowd.add(1, '千舰', 10, 0, '千­舰')

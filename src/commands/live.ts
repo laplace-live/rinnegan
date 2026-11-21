@@ -199,8 +199,9 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
         flagged++
         const verdict = VERDICT_LABELS[assessment.verdict]
         if (assessment.verdict === 'spam' || options.verbose) {
+          const manual = detector.manualBlend(assessment.roomId, assessment.uid) ? ' · 手动融入' : ''
           print(
-            `${assessment.verdict === 'spam' ? style.red(verdict) : style.yellow(verdict)} ${assessment.score} ${describeAssessment(assessment)}`
+            `${assessment.verdict === 'spam' ? style.red(verdict) : style.yellow(verdict)} ${assessment.score} ${describeAssessment(assessment)}${manual}`
           )
         }
         audit.write('detection', {
@@ -259,6 +260,7 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
       source.stop()
       // Let in-flight lifts finish before the store closes under them.
       await lifecycle.stop()
+      const manualBlends = detector.manualBlends()
       audit.write('session-end', {
         reason,
         messages: judged,
@@ -272,6 +274,14 @@ export async function startLive(options: LiveOptions): Promise<LiveSession | nul
           score: summary.peak.score,
           verdict: summary.peak.verdict,
           pattern: summary.peak.pattern,
+        })),
+        manualBlend: manualBlends.length,
+        manualBlends: manualBlends.map(({ roomId, uid, uname, sends, copies }) => ({
+          roomId,
+          uid,
+          uname,
+          sends,
+          copies,
         })),
       })
       await store.close().catch(() => undefined)

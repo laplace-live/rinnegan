@@ -46,7 +46,7 @@ offline
       --until <时间>        只看此时间之前
       --top <n>             每类最多显示 n 人，默认 30
       --samples <n>         每条内容显示 n 个样本，默认 3
-      --spam-only           不显示可疑用户
+      --spam-only           只显示独轮车，不显示可疑与手动融入用户
       --report-dir <dir>    报告目录，默认 ./reports
       --no-report           不写 JSON / Markdown / HTML 报告
 
