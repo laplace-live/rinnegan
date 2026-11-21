@@ -25,6 +25,9 @@ Rinnegan requires [Bun](https://bun.sh) ≥ 1.3.7. `pnpx` and `npx` also work as
 `bun add -g @laplace.live/rinnegan` installs the `rinnegan` binary used below. Paths for config, saved logins, logs,
 and reports resolve relative to the current working directory.
 
+The detector is a library too: [`@laplace.live/rinnegan-sdk`](packages/sdk) judges danmaku inside any app, in the
+browser as well.
+
 ## How it detects
 
 Repetition alone never triggers a ban. During hype moments, real viewers manually spam `?` or `老公天下第一` dozens of
@@ -214,7 +217,7 @@ the send tick Rinnegan fitted. It names archives by file name only, never by the
 ## Configuration
 
 Precedence: defaults < `rinnegan.config.json` (or `--config`) < environment variables < CLI flags. See
-[`rinnegan.config.example.json`](rinnegan.config.example.json) and `rinnegan --help`.
+[`rinnegan.config.example.json`](apps/rinnegan/rinnegan.config.example.json) and `rinnegan --help`.
 
 | Variable                                                                                                                                                    | Purpose                         |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
@@ -233,13 +236,16 @@ Written to `logs/audit-YYYY-MM-DD.jsonl`, one JSON object per line with `ts`, `s
 
 ## Development
 
+A Bun workspace: `apps/rinnegan` is the CLI, `@laplace.live/rinnegan`, and `packages/sdk` the detector it bundles,
+`@laplace.live/rinnegan-sdk`.
+
 ```bash
 bun install
-bun run src/cli.ts offline references/archive.lca   # run from source
+bun run offline references/archive.lca   # run the CLI from source
 bun run lint && bun run typecheck && bun test
-bun run build                                        # dist/cli.js, the bundle npm ships (built on pack/publish)
-bun run compile                                      # standalone dist/rinnegan binary
-bunx changeset                                       # describe a user-facing change (see Releasing)
+bun run build                            # each package's dist/, what npm ships (built on pack/publish)
+bun run compile                          # standalone apps/rinnegan/dist/rinnegan binary
+bunx changeset                           # describe a user-facing change (see Releasing)
 ```
 
 Tests that rely on real archives in `references/` are skipped when those files are absent. Postgres and Redis store
@@ -247,8 +253,8 @@ tests run when `RINNEGAN_TEST_DATABASE_URL` / `RINNEGAN_TEST_REDIS_URL` are set.
 
 ## Releasing
 
-Versions and the changelog are managed by [Changesets](https://changesets.dev). Never bump `version` in
-`package.json`, push a release tag, or edit `CHANGELOG.md` by hand.
+Versions and changelogs are managed by [Changesets](https://changesets.dev). Never bump `version` in a
+`package.json`, push a release tag, or edit a `CHANGELOG.md` by hand.
 
 1. Every user-facing change ships with a changeset in the same commit. Run `bunx changeset`, or create a file under
    `.changeset/` directly:
@@ -264,16 +270,17 @@ Versions and the changelog are managed by [Changesets](https://changesets.dev). 
    Use `minor` for new features and substantial behavior changes, and `patch` for fixes and small adjustments. Start the
    summary with `feat:`, `fix:`, `perf:`, or `chore:`, followed by a single capitalized sentence written for users—the
    prefix is stripped and the rest lands verbatim in `CHANGELOG.md` and the GitHub Release. CI, docs, and refactors with
-   no user-visible effect do not need a changeset; `bunx changeset status` lists pending changesets.
-2. When changesets land on `master`, the Release workflow maintains an open `chore: version packages` PR that bumps the
-   version and updates `CHANGELOG.md`.
-3. Merging that PR publishes the new version to npm, tags `v<version>`, and creates the GitHub Release from the new
-   changelog entry.
+   no user-visible effect do not need a changeset; `bunx changeset status` lists pending changesets. The CLI bundles
+   the SDK, so an SDK change that CLI users will notice lists both packages.
+2. When changesets land on `master`, the Release workflow maintains an open `chore: version packages` PR that bumps
+   versions and updates each package's `CHANGELOG.md`.
+3. Merging that PR publishes the new versions to npm, tags each one `<name>@<version>` (such as
+   `@laplace.live/rinnegan@0.2.0`), and creates a GitHub Release from each new changelog entry.
 
 The Release workflow publishes via npm [trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC, no token
-required), so the package's settings on npmjs.com must list GitHub Actions as a trusted publisher for repository
+required), so each package's settings on npmjs.com must list GitHub Actions as a trusted publisher for repository
 `laplace-live/rinnegan` and workflow `release.yml`.
 
 ## License
 
-AGPL-3.0
+AGPL-3.0, except the SDK in [`packages/sdk`](packages/sdk), which is MIT.

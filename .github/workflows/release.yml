@@ -1,8 +1,8 @@
 name: Release
 
 # Changesets flow, as in laplace-comet: while changesets sit on master, keep a "chore: version packages" PR open
-# (version bump + CHANGELOG.md). Merging it publishes the new version to npm and tags it v<version>; github-releases
-# then publishes the GitHub Release from its CHANGELOG entry.
+# (version bumps + each package's CHANGELOG.md). Merging it publishes the new versions to npm and tags each
+# <name>@<version>; github-releases then publishes a GitHub Release from each new CHANGELOG entry.
 
 on:
   push:
@@ -35,7 +35,7 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
-      # `changeset publish` runs `npm publish` (whose prepack builds dist/cli.js), and trusted publishing needs
+      # `changeset publish` runs `npm publish` (whose prepack builds each package's dist/), and trusted publishing needs
       # npm >= 11.5.1. Upgrade the npm setup-node puts on PATH; `sudo npm` would upgrade the runner's system copy.
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -60,7 +60,7 @@ jobs:
         uses: changesets/action@v2
         with:
           version-script: bun run version
-          # Publishes the version unless npm already has it, and tags it v<version>; the action pushes the tag.
+          # Publishes each version npm doesn't have yet and tags it <name>@<version>; the action pushes the tags.
           publish-script: bun run release
           # No [skip ci]: this repo also allows squash and rebase merges, which would carry it onto master and skip
           # the publish.
@@ -81,19 +81,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Publish the release for the tagged version
+      - name: Publish releases for tagged versions
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version=$(jq -r .version package.json)
-          tag="v$version"
-          status=0
-          git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null || status=$?
-          # 2: not tagged yet. Anything else is a failed lookup, which must not pass for "nothing to release".
-          if [ "$status" -eq 2 ]; then exit 0; fi
-          if [ "$status" -ne 0 ]; then
-            echo "::error::Could not look up $tag"
-            exit 1
-          fi
-          sh .github/scripts/changelog-section.sh CHANGELOG.md "$version" > notes.md
-          sh .github/scripts/publish-release.sh "$tag" notes.md
+          for manifest in apps/*/package.json packages/*/package.json; do
+            name=$(jq -r .name "$manifest")
+            version=$(jq -r .version "$manifest")
+            tag="$name@$version"
+            status=0
+            git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null || status=$?
+            # 2: not tagged yet. Anything else is a failed lookup, which must not pass for "nothing to release".
+            if [ "$status" -eq 2 ]; then continue; fi
+            if [ "$status" -ne 0 ]; then
+              echo "::error::Could not look up $tag"
+              exit 1
+            fi
+            sh .github/scripts/changelog-section.sh "$(dirname "$manifest")/CHANGELOG.md" "$version" > notes.md
+            sh .github/scripts/publish-release.sh "$tag" notes.md
+          done

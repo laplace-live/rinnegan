@@ -1,0 +1,55 @@
+{
+  "name": "@laplace.live/rinnegan-sdk",
+  "version": "0.0.0",
+  "description": "Detect 独轮车 (looped duplicate danmaku) in Bilibili Live chat: the detector behind LAPLACE Rinnegan",
+  "keywords": [
+    "bilibili",
+    "bilibili-live",
+    "danmaku",
+    "moderation",
+    "spam"
+  ],
+  "homepage": "https://github.com/laplace-live/rinnegan/tree/master/packages/sdk#readme",
+  "bugs": "https://github.com/laplace-live/rinnegan/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/laplace-live/rinnegan.git",
+    "directory": "packages/sdk"
+  },
+  "license": "MIT",
+  "author": "LAPLACE Live! <s@laplace.live>",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepack": "bun run build",
+    "typecheck": "bun check && bun check -p tsconfig.build.json",
+    "test": "bun test"
+  },
+  "peerDependencies": {
+    "@laplace.live/event-types": "^2.0.21"
+  },
+  "peerDependenciesMeta": {
+    "@laplace.live/event-types": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@laplace.live/event-types": "^2.0.21",
+    "@types/bun": "latest",
+    "typescript": "^7.0.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
