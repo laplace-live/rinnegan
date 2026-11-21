@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // No Bun or Node globals: the published code runs in browsers too, so using them fails here
+    "types": [],
+    "noEmit": false,
+    "declaration": true,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "exclude": ["src/**/*.test.ts", "src/testing"]
+}
