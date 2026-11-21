@@ -66,7 +66,8 @@ describe('renderHtml', () => {
     const inPeriod = (s: number) => Number.isInteger(s) && s >= 0 && s <= Math.round(period?.span ?? 0)
     expect(lane?.sends.length).toBeGreaterThan(2)
     expect(lane?.sends.every(inPeriod)).toBe(true)
-    expect(lane?.flagged.every(([from, to]) => inPeriod(from) && inPeriod(to))).toBe(true)
+    expect(lane?.flagged.length).toBeGreaterThan(0)
+    expect(lane?.flagged.every(([from, to]) => from <= to && inPeriod(from) && inPeriod(to))).toBe(true)
     expect(data.gaps['1:4242']?.tick).toBeGreaterThan(1)
   })
 
