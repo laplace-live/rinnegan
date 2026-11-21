@@ -8,10 +8,10 @@
   const mk = (tag, attrs, parent) => {
     const node = document.createElementNS(NS, tag)
     for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value))
-    if (parent) parent.appendChild(node)
+    parent.appendChild(node)
     return node
   }
-  const text = (parent, x, y, value, cls = 'tx', anchor = 'start') => {
+  const text = (parent, x, y, value, cls, anchor) => {
     const node = mk('text', { x, y, class: cls, 'text-anchor': anchor }, parent)
     node.textContent = value
     return node

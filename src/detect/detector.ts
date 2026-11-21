@@ -2,7 +2,7 @@ import type { Assessment, ChatMessage, ClusterSummary, Evidence, EvidenceKind, P
 
 import { type ReplaySend, TrendTape, type TriggerGate, TriggerReplay } from '@/detect/blend'
 import { CrowdIndex } from '@/detect/crowd'
-import { LockstepIndex } from '@/detect/lockstep'
+import { LockstepIndex, STEP_MS } from '@/detect/lockstep'
 import { type ManualBlend, ManualBlendIndex } from '@/detect/manual'
 import {
   canonicalForm,
@@ -14,6 +14,7 @@ import {
 } from '@/detect/normalize'
 import { boundedLevenshtein, fuzzyBudget, insertionJitter, sameChars, singleInsertion } from '@/detect/similarity'
 import {
+  EMPTY_RHYTHM,
   isLatticeGap,
   type Lattice,
   latticeShare,
@@ -121,6 +122,8 @@ interface Candidate {
   supporting?: boolean
   /** `pattern` stands even when the candidate loses */
   decisive?: boolean
+  /** `repeats` counts 自动融入 line switches, not repeated messages */
+  switches?: boolean
 }
 
 interface Cluster {
@@ -180,6 +183,8 @@ const LOCKSTEP_CORROBORATION = 0.5
 /** 自动融入 with 随机字符 moves on after a send or two, so its jitter shows across lines, not within one */
 const JITTERED_SENDS = 6
 const JITTERED_LINES = 5
+/** Lines an assessment shows */
+const SHOWN_CLUSTERS = 3
 
 /** Noisy-OR: independent signals reinforce each other without exceeding 1. */
 function combine(weights: number[]): number {
@@ -202,9 +207,18 @@ function candidate(
   found: Evidence,
   repeats: number,
   members: Set<ClusterEval>,
-  extra: Pick<Candidate, 'pattern' | 'supporting' | 'decisive'> = {}
+  extra: Pick<Candidate, 'pattern' | 'supporting' | 'decisive' | 'switches'> = {}
 ): Candidate {
   return { repeats, automation: found.weight, evidence: found, members, ...extra }
+}
+
+/** Carries its own tool's invisible chars, not ones copied with someone else's line (+1). */
+function ownEvasion(rec: Rec): boolean {
+  return rec.evasion.length > 0 && !rec.echo
+}
+
+function evasionNames(recs: readonly Rec[]): string[] {
+  return [...new Set(recs.flatMap(rec => rec.evasion))].map(codePointLabel)
 }
 
 function visibleLength(rec: Rec): number {
@@ -345,13 +359,12 @@ export class Detector {
     if (!countable) return
     this.#manual.observe(state.roomId, state.uid, state.uname, rec.key, text, rec.at)
     const send: ReplaySend = { at: rec.at, text, key: rec.key }
+    const follows = tape.followsCrowd(send, state.uid)
     // 自动融入 only ever switches to a line others are sending; pair such switches across accounts.
-    if (rec.key !== state.lastLine && tape.followsCrowd(send, state.uid)) {
-      this.#lockstep.observe(state.roomId, state.uid, rec.key, rec.at)
-    }
+    if (follows && rec.key !== state.lastLine) this.#lockstep.observe(state.roomId, state.uid, rec.key, rec.at)
     state.lastLine = rec.key
-    if (state.replay) state.replay.observe(tape, send)
-    else if (tape.followsCrowd(send, state.uid)) state.replay = new TriggerReplay(state.uid, send)
+    if (state.replay) state.replay.observe(tape, send, follows)
+    else if (follows) state.replay = new TriggerReplay(state.uid, send)
   }
 
   #recordSessionGap(state: UserState, gap: number): void {
@@ -502,14 +515,14 @@ export class Detector {
 
     // Invisible chars at shifting positions: chatterbox 随机字符 / 路怒 / AI规避. No human types U+00AD, but a +1 copies
     // someone else's, so only self-made layouts count and they must carry the line.
-    const invisible = recs.filter(rec => rec.evasion.length > 0 && !rec.echo)
+    const invisible = recs.filter(ownEvasion)
     if (invisible.length >= 2) {
       const layouts = new Set(invisible.map(rec => rec.raw))
       const jitter = layouts.size >= 2 || invisible.length < n
       const carries = invisible.length * 2 >= n
       let weight = invisible.length >= 3 ? (jitter ? 0.95 : 0.6) : jitter ? 0.6 : 0.3
       if (!carries) weight = Math.min(weight, 0.5)
-      const names = [...new Set(invisible.flatMap(rec => rec.evasion))].map(codePointLabel)
+      const names = evasionNames(invisible)
       found.push(
         evidence(
           'invisible-jitter',
@@ -658,18 +671,16 @@ export class Detector {
     // A blend bot may never repeat a line inside the window, so its replay competes even without a repeated line.
     const trigger = this.#trendTrigger(state, evaluations)
     const others = [this.#templateCycle(state, evaluations), tick, trigger, this.#jitteredLines(state, evaluations)]
-    const backed = automationProof([
-      ...others.flatMap(option => (option ? [option.evidence] : [])),
-      ...(best?.evidence ?? []),
-    ])
-    const lockstep = this.#lockstepWith(state, evaluations, at, backed >= LOCKSTEP_CORROBORATION)
-    const candidates = [...others, lockstep]
+    const backed = () =>
+      automationProof([...others.flatMap(option => (option ? [option.evidence] : [])), ...(best?.evidence ?? [])]) >=
+      LOCKSTEP_CORROBORATION
+    const candidates = [...others, this.#lockstepWith(state, evaluations, at, backed)]
     for (const option of candidates) {
       if (!option) continue
       const wins = this.#score(option.repeats, option.automation) > this.#score(repeats, automation)
       if (wins) {
         ;({ repeats, automation, members, pattern } = option)
-        triggerHits = option === trigger || option === lockstep
+        triggerHits = option.switches === true
       }
       if (wins || option.supporting) lead.unshift(option.evidence)
       if (option.decisive) decided = option.pattern
@@ -720,12 +731,12 @@ export class Detector {
 
   /** Lines for reports, topped up with the latest single sends, which line-switch evidence can flag on its own. */
   #shownClusters(state: UserState, shown: ClusterEval[], verdict: Verdict): ClusterSummary[] {
-    const clusters = shown.slice(0, 3).map(evaluation => evaluation.summary)
-    if (verdict === 'none' || clusters.length >= 3) return clusters
+    const clusters = shown.slice(0, SHOWN_CLUSTERS).map(evaluation => evaluation.summary)
+    if (verdict === 'none' || clusters.length >= SHOWN_CLUSTERS) return clusters
     const singles = [...state.clusters].filter(cluster => cluster.recs.length === 1)
     singles.sort((a, b) => (b.recs[0] as Rec).at - (a.recs[0] as Rec).at)
-    for (const cluster of singles.slice(0, 3 - clusters.length)) {
-      clusters.push(this.#summarize(state, cluster, measureRhythm([(cluster.recs[0] as Rec).at])))
+    for (const cluster of singles.slice(0, SHOWN_CLUSTERS - clusters.length)) {
+      clusters.push(this.#summarize(state, cluster, EMPTY_RHYTHM))
     }
     return clusters
   }
@@ -806,38 +817,49 @@ export class Detector {
     )
     const members = new Set(evaluations.filter(evaluation => fit.keys.has(evaluation.summary.key)))
     // Sends timed by the room's trends make a blend bot, whatever timer or template its lines also fit.
-    return candidate(found, fit.hits, members, { pattern: 'blend', supporting: true, decisive: strong })
+    return candidate(found, fit.hits, members, { pattern: 'blend', supporting: true, decisive: strong, switches: true })
   }
 
-  /** Line switches in step with other accounts: several 自动融入 instances answering one trigger together. */
-  #lockstepWith(state: UserState, evaluations: ClusterEval[], at: number, backed: boolean): Candidate | null {
+  /**
+   * Line switches in step with other accounts: several 自动融入 instances answering one trigger together. `backed`:
+   * whether other evidence proves automation, asked only of an account that always sends first.
+   */
+  #lockstepWith(state: UserState, evaluations: ClusterEval[], at: number, backed: () => boolean): Candidate | null {
     const fit = this.#lockstep.fit(state.roomId, state.uid, at - this.options.windowMs)
     if (!fit) return null
     // Evidence text goes to AI review, which never sees a uid.
     const partner = this.#users.get(`${state.roomId}:${fit.partner}`)?.uname || '另一个账号'
     const others = fit.partners > 1 ? ` 等 ${fit.partners} 个账号` : ''
-    const weak = fit.leads && !backed
+    const weak = fit.leads && !backed()
     const found = evidence(
       'lockstep',
       weak ? LEADING_LOCKSTEP_WEIGHT : 0.9,
-      `与 ${partner}${others}同步换内容 ${fit.switches} 次（${fit.inStep}/${fit.paired} 次与其相差 ${Math.round(fit.offsetMs)}±150ms）${weak ? '，但总是先发，也可能是被人跟着发' : ''}`
+      `与 ${partner}${others}同步换内容 ${fit.switches} 次（${fit.inStep}/${fit.paired} 次与其相差 ${Math.round(fit.offsetMs)}±${STEP_MS}ms）${weak ? '，但总是先发，也可能是被人跟着发' : ''}`
     )
     const members = new Set(evaluations.filter(evaluation => fit.keys.has(evaluation.summary.key)))
-    return candidate(found, fit.switches, members, { pattern: 'blend', supporting: true, decisive: !weak })
+    return candidate(found, fit.switches, members, {
+      pattern: 'blend',
+      supporting: true,
+      decisive: !weak,
+      switches: true,
+    })
   }
 
   /** Self-made invisible chars on most lines, each sent once or twice: 自动融入 with 随机字符 moving from trend to trend. */
   #jitteredLines(state: UserState, evaluations: ClusterEval[]): Candidate | null {
     let text = 0
+    let plain = 0
     const own: Rec[] = []
     for (const rec of state.records) {
       if (rec.isEmote) continue
       text++
-      if (rec.evasion.length > 0 && !rec.echo) own.push(rec)
+      if (ownEvasion(rec)) own.push(rec)
+      // Already short of the 80% share below, however the scan ends
+      else if (++plain > 0.2 * state.records.length) return null
     }
     const lines = new Set(own.map(rec => rec.cluster.key))
     if (own.length < JITTERED_SENDS || lines.size < JITTERED_LINES || own.length < 0.8 * text) return null
-    const names = [...new Set(own.flatMap(rec => rec.evasion))].map(codePointLabel)
+    const names = evasionNames(own)
     const crowded = own.filter(rec => this.#crowd.others(state.roomId, rec.key, state.uid) >= 2).length
     const found = evidence(
       'invisible-jitter',

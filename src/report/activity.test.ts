@@ -5,7 +5,7 @@ import type { ReportUser } from '@/report/report'
 import type { ChatMessage } from '@/types'
 
 import { buildActivity } from '@/report/activity'
-import { compareMessages } from '@/sources/archive'
+import { mergeStreams } from '@/testing/simulate'
 
 /** China time, which reports use by default, on 2026-10-20, so the expectations hold on any machine. */
 function at(hour: number, minute: number, second = 0): number {
@@ -67,13 +67,9 @@ function flagged(uid: number, patch: Partial<ReportUser> = {}): ReportUser {
   }
 }
 
-function sorted(...streams: ChatMessage[][]): ChatMessage[] {
-  return streams.flat().sort(compareMessages)
-}
-
 describe('buildActivity', () => {
   test('draws one timeline per run of flagged stretches, with context around them', () => {
-    const messages = sorted(
+    const messages = mergeStreams(
       every(9, at(19, 0), at(23, 59), 60_000),
       every(1, at(20, 5), at(20, 10), 10_000),
       every(2, at(20, 40), at(20, 45), 10_000),
@@ -101,18 +97,17 @@ describe('buildActivity', () => {
     expect(evening?.counts.reduce((sum, n) => sum + n, 0)).toBe(inside.length)
 
     const lane = evening?.lanes[0]
-    expect(lane?.sends[0]).toBe(35 * 60)
+    expect(lane?.sends[0]).toBe(at(20, 5))
+    expect(lane?.sends.at(-1)).toBe(at(20, 10))
     expect(lane?.sends).toHaveLength(31)
-    expect(lane?.flagged).toEqual([[36 * 60, 40 * 60, 'spam']])
-    expect(lane?.firstAt).toBe(at(20, 5))
-    expect(lane?.lastAt).toBe(at(20, 10))
+    expect(lane?.episodes).toEqual([episode(at(20, 6), at(20, 10))])
 
     expect(evening?.ticks[0]).toEqual({ at: at(19, 30), label: '19:30' })
     expect(evening?.ticks.map(tick => tick.label)).toContain('21:15')
   })
 
   test('keeps timelines inside the archive and labels midnight with its date', () => {
-    const messages = sorted(every(9, at(23, 50), at(23, 59), 10_000), [message(9, at(23, 59) + 30 * 60_000)])
+    const messages = mergeStreams(every(9, at(23, 50), at(23, 59), 10_000), [message(9, at(23, 59) + 30 * 60_000)])
     const users = [flagged(9, { episodes: [episode(at(23, 52), at(23, 55))] })]
     const [period] = buildActivity(messages, users).periods
     expect(period?.from).toBe(at(23, 50))
@@ -122,7 +117,7 @@ describe('buildActivity', () => {
 
   test('bins the gaps between a user’s danmaku and keeps the send tick for guides', () => {
     const loop = every(1, at(20, 0), at(20, 0) + 49 * 1300, 1300)
-    const messages = sorted(loop, [message(1, at(20, 10))], every(2, at(20, 0), at(20, 1), 10_000))
+    const messages = mergeStreams(loop, [message(1, at(20, 10))], every(2, at(20, 0), at(20, 1), 10_000))
     const users = [
       flagged(1, {
         episodes: [episode(at(20, 0), at(20, 1))],
@@ -139,7 +134,7 @@ describe('buildActivity', () => {
   })
 
   test('reads badges as of the peak and streamer names from their own danmaku', () => {
-    const messages = sorted(
+    const messages = mergeStreams(
       [
         message(1, at(20, 0), { guardType: 3, medalLevel: 21, medalName: '奶糖花' }),
         message(1, at(20, 1), { guardType: 3, medalLevel: 22, medalName: '奶糖花' }),

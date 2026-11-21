@@ -1,9 +1,3 @@
-/**
- * Accounts that keep switching to the same trending line at a fixed offset from each other. Several 自动融入 instances
- * fire on one trigger, so their sends land a steady few ms apart however the room's timing goes; viewers joining the
- * same chant by hand land seconds apart, and a viewer who completes a trigger sits a second ahead of every bot.
- */
-
 /** Switches to one line further apart than this never pair */
 const PAIR_MS = 1500
 /**
@@ -12,7 +6,7 @@ const PAIR_MS = 1500
  */
 export const CROWDED_SWITCHES = 32
 /** Half-width of the band around a pair's median offset that counts as in step */
-const STEP_MS = 150
+export const STEP_MS = 150
 /** A pair offset further than this reacts to different moments, e.g. one account completes the trigger the other answers */
 const MAX_OFFSET_MS = 400
 /**
@@ -55,18 +49,30 @@ export interface LockstepFit {
   leads: boolean
 }
 
-function median(values: readonly number[]): number {
+/** The higher middle value on even counts, without interpolating. */
+function upperMedian(values: readonly number[]): number {
   const sorted = Float64Array.from(values).sort()
   return sorted[sorted.length >> 1] as number
 }
 
-/** Line switches per room, paired across accounts. Feed switches in time order. */
+/** Index of the pair's first switch at or after `at`. */
+function firstSince(pair: Pair, at: number): number {
+  let i = 0
+  while (i < pair.ta.length && Math.max(pair.ta[i] as number, pair.tb[i] as number) < at) i++
+  return i
+}
+
+/**
+ * Line switches per room, paired across accounts. 自动融入 instances firing on one trigger switch a steady few ms
+ * apart, however the room's timing goes; viewers joining a chant by hand land seconds apart. Feed switches in time order.
+ */
 export class LockstepIndex {
   /** room → line → switches in the last {@link PAIR_MS} */
   readonly #recent = new Map<number, Map<string, Switch[]>>()
+  /** `room:a:b` → pair */
   readonly #pairs = new Map<string, Pair>()
-  /** `room:uid` → ids of its pairs */
-  readonly #byUser = new Map<string, Set<string>>()
+  /** `room:uid` → its pairs */
+  readonly #byUser = new Map<string, Set<Pair>>()
 
   /** Record `uid` switching to `key`, a line others were already sending, and pair it with recent switches to it. */
   observe(roomId: number, uid: number, key: string, at: number): void {
@@ -93,8 +99,8 @@ export class LockstepIndex {
       if (!pair) {
         pair = { a, b, ta: [], tb: [], keys: [] }
         this.#pairs.set(id, pair)
-        this.#link(roomId, a, id)
-        this.#link(roomId, b, id)
+        this.#link(roomId, a, pair)
+        this.#link(roomId, b, pair)
       }
       pair.ta.push(forward ? other.at : at)
       pair.tb.push(forward ? at : other.at)
@@ -110,21 +116,17 @@ export class LockstepIndex {
 
   /** Partners `uid` kept step with since `since`; null when there are none. */
   fit(roomId: number, uid: number, since: number): LockstepFit | null {
-    const ids = this.#byUser.get(`${roomId}:${uid}`)
-    if (!ids) return null
-    let best: { partner: number; inStep: number; paired: number; offsetMs: number } | null = null
+    const pairs = this.#byUser.get(`${roomId}:${uid}`)
+    if (!pairs) return null
+    let best: Pick<LockstepFit, 'partner' | 'inStep' | 'paired' | 'offsetMs'> | null = null
     let partners = 0
     let follows = false
     const switches = new Set<number>()
     const keys = new Set<string>()
-    for (const id of ids) {
-      const pair = this.#pairs.get(id)
-      if (!pair) {
-        ids.delete(id)
-        continue
-      }
-      let start = 0
-      while (start < pair.ta.length && Math.max(pair.ta[start] as number, pair.tb[start] as number) < since) start++
+    for (const pair of pairs) {
+      // Most pairs stay short: skip them before the window scan
+      if (pair.ta.length < LOCKSTEP_MIN) continue
+      const start = firstSince(pair, since)
       const paired = pair.ta.length - start
       if (paired < LOCKSTEP_MIN) continue
       const self = pair.a === uid
@@ -133,18 +135,21 @@ export class LockstepIndex {
         const offset = (pair.tb[i] as number) - (pair.ta[i] as number)
         offsets.push(self ? -offset : offset)
       }
-      const offsetMs = median(offsets)
+      const offsetMs = upperMedian(offsets)
       if (Math.abs(offsetMs) > MAX_OFFSET_MS) continue
-      let inStep = 0
-      for (const offset of offsets) if (Math.abs(offset - offsetMs) <= STEP_MS) inStep++
+      const steps: number[] = []
+      offsets.forEach((offset, i) => {
+        if (Math.abs(offset - offsetMs) <= STEP_MS) steps.push(start + i)
+      })
+      const inStep = steps.length
       if (inStep < LOCKSTEP_MIN || inStep < LOCKSTEP_SHARE * paired) continue
       partners++
       if (offsetMs >= 0) follows = true
-      offsets.forEach((offset, i) => {
-        if (Math.abs(offset - offsetMs) > STEP_MS) return
-        switches.add((self ? pair.ta : pair.tb)[start + i] as number)
-        keys.add(pair.keys[start + i] as string)
-      })
+      const own = self ? pair.ta : pair.tb
+      for (const i of steps) {
+        switches.add(own[i] as number)
+        keys.add(pair.keys[i] as string)
+      }
       if (!best || inStep > best.inStep) best = { partner: self ? pair.b : pair.a, inStep, paired, offsetMs }
     }
     return best ? { ...best, partners, switches: switches.size, keys, leads: !follows } : null
@@ -153,20 +158,16 @@ export class LockstepIndex {
   /** Forget switches before `cutoff`, and pairs left with none. */
   sweep(cutoff: number): void {
     for (const [id, pair] of this.#pairs) {
-      let drop = 0
-      while (drop < pair.ta.length && Math.max(pair.ta[drop] as number, pair.tb[drop] as number) < cutoff) drop++
+      const drop = firstSince(pair, cutoff)
       if (drop === 0) continue
-      if (drop === pair.ta.length) {
-        this.#pairs.delete(id)
-        continue
-      }
       pair.ta.splice(0, drop)
       pair.tb.splice(0, drop)
       pair.keys.splice(0, drop)
+      if (pair.ta.length === 0) this.#pairs.delete(id)
     }
-    for (const [user, ids] of this.#byUser) {
-      for (const id of ids) if (!this.#pairs.has(id)) ids.delete(id)
-      if (ids.size === 0) this.#byUser.delete(user)
+    for (const [user, pairs] of this.#byUser) {
+      for (const pair of pairs) if (pair.ta.length === 0) pairs.delete(pair)
+      if (pairs.size === 0) this.#byUser.delete(user)
     }
     for (const [roomId, lines] of this.#recent) {
       for (const [line, switches] of lines) if ((switches.at(-1) as Switch).at < cutoff) lines.delete(line)
@@ -174,13 +175,13 @@ export class LockstepIndex {
     }
   }
 
-  #link(roomId: number, uid: number, id: string): void {
+  #link(roomId: number, uid: number, pair: Pair): void {
     const user = `${roomId}:${uid}`
-    let ids = this.#byUser.get(user)
-    if (!ids) {
-      ids = new Set()
-      this.#byUser.set(user, ids)
+    let pairs = this.#byUser.get(user)
+    if (!pairs) {
+      pairs = new Set()
+      this.#byUser.set(user, pairs)
     }
-    ids.add(id)
+    pairs.add(pair)
   }
 }

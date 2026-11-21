@@ -309,9 +309,12 @@ export class TriggerReplay {
     this.#sends.push(first)
   }
 
-  /** Judge the user's next send, in time order. Sends nobody else made are manual: no setting's cooldown moves. */
-  observe(tape: TrendTape, send: ReplaySend): void {
-    if (tape.followsCrowd(send, this.#uid)) {
+  /**
+   * Judge the user's next send, in time order; `follows` is its {@link TrendTape.followsCrowd}. Sends nobody else made
+   * are manual: no setting's cooldown moves.
+   */
+  observe(tape: TrendTape, send: ReplaySend, follows: boolean): void {
+    if (follows) {
       const change = { at: send.at, key: send.key, mask: 0, ruledOut: 0, contested: 0 }
       for (let i = 0; i < this.#hypotheses.length; i++) {
         const flags = this.#judge(tape, this.#hypotheses[i] as Hypothesis, send)

@@ -1,8 +1,10 @@
+import type { Episode } from '@/detect/detector'
 import type { ReportUser } from '@/report/report'
-import type { ChatMessage, Verdict } from '@/types'
+import type { ChatMessage } from '@/types'
 
 import { median } from '@/detect/timing'
-import { afterMidnight, clock, localDate } from '@/util/console'
+import { userKey } from '@/report/report'
+import { afterMidnight, hourMinute, monthDay } from '@/util/console'
 
 /** Context shown around each flagged stretch on a timeline */
 export const TIMELINE_CONTEXT_MS = 30 * 60_000
@@ -25,17 +27,15 @@ const GAP_SCALES = [
 ]
 const MIN_GAPS = 8
 
-/** One flagged user's row on a {@link Period}; times are seconds from the period start. */
+/** One flagged user's row on a {@link Period}. */
 export interface Lane {
   roomId: number
   uid: number
   uname: string
+  /** Unix ms of the user's danmaku in the period */
   sends: number[]
-  /** Flagged stretches as `[start, end, verdict]` */
-  flagged: [number, number, Verdict][]
-  /** Unix ms of the user's first and last danmaku in the period, null when none */
-  firstAt: number | null
-  lastAt: number | null
+  /** Flagged stretches overlapping the period */
+  episodes: Episode[]
 }
 
 /** A stretch of the archive around flagged activity, drawn as one timeline. */
@@ -81,10 +81,6 @@ export interface Activity {
   gaps: Map<string, GapHistogram>
   /** As of each user's peak, by {@link userKey} */
   badges: Map<string, Badges>
-}
-
-export function userKey(user: { roomId: number; uid: number }): string {
-  return `${user.roomId}:${user.uid}`
 }
 
 /** Timelines, send-gap histograms and badges for the flagged `users`; `messages` sorted oldest first. */
@@ -156,22 +152,11 @@ function periodsOf(
       const bucket = Math.min(counts.length - 1, Math.floor((at - from) / bucketMs))
       counts[bucket] = (counts[bucket] as number) + 1
     }
-    const seconds = (ms: number) => Math.round((Math.min(Math.max(ms, from), to) - from) / 1000)
     const lanes = users.flatMap((user): Lane[] => {
       const episodes = user.episodes.filter(episode => episode.endAt >= from && episode.startAt <= to)
       if (episodes.length === 0) return []
       const times = (sends.get(userKey(user)) ?? []).filter(at => at >= from && at <= to)
-      return [
-        {
-          roomId: user.roomId,
-          uid: user.uid,
-          uname: user.uname,
-          sends: times.map(seconds),
-          flagged: episodes.map(episode => [seconds(episode.startAt), seconds(episode.endAt), episode.verdict]),
-          firstAt: times[0] ?? null,
-          lastAt: times[times.length - 1] ?? null,
-        },
-      ]
+      return [{ roomId: user.roomId, uid: user.uid, uname: user.uname, sends: times, episodes }]
     })
     return { from, to, bucketMs, counts, ticks: ticksOf(from, to), lanes }
   })
@@ -185,8 +170,8 @@ function ticksOf(from: number, to: number): { at: number; label: string }[] {
     const at = afterMidnight(from, i * minutes)
     if (at > to) break
     if (at < from) continue
-    const time = clock(at).slice(0, 5)
-    ticks.push({ at, label: time === '00:00' ? localDate(at).slice(5) : time })
+    const time = hourMinute(at)
+    ticks.push({ at, label: time === '00:00' ? monthDay(at) : time })
   }
   return ticks
 }

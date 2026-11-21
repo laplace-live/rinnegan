@@ -31,7 +31,7 @@ export interface Rhythm {
   banded: number
 }
 
-const EMPTY_RHYTHM: Rhythm = { gaps: 0, beatMs: 0, cv: 0, onBeat: 0, periodic: 0, banded: 0 }
+export const EMPTY_RHYTHM: Rhythm = { gaps: 0, beatMs: 0, cv: 0, onBeat: 0, periodic: 0, banded: 0 }
 
 /** Send-queue tick search range: chatterbox's 1010 ms queue gap plus 140–440 ms request latency. */
 const TICK_MIN_MS = 1150

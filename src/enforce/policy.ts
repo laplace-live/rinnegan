@@ -3,7 +3,7 @@ import type { Assessment } from '@/types'
 
 import { normalizeReason } from '@/bilibili/client'
 import { stripEvasionChars } from '@/detect/normalize'
-import { PATTERN_LABELS } from '@/report/labels'
+import { PATTERN_LABELS, USER_TYPE_LABELS } from '@/report/labels'
 
 /** Suspects at or above this score are offered to the reviewer in `assist` mode. */
 const ASSIST_MIN_SCORE = 75
@@ -39,8 +39,8 @@ export function exemptionReason(
   assessment: Pick<Assessment, 'uid' | 'userType' | 'guardType' | 'medalLevel' | 'pattern'>,
   ban: BanConfig
 ): string | null {
-  if (assessment.userType === 100) return '主播'
-  if (assessment.userType === 1) return '房管'
+  const role = USER_TYPE_LABELS[assessment.userType]
+  if (role) return role
   if (ban.exemptUids.includes(assessment.uid)) return '白名单'
   if (ban.exemptGuards && assessment.guardType > 0) return '大航海成员'
   if (ban.exemptMedalLevel > 0 && assessment.medalLevel >= ban.exemptMedalLevel) {

@@ -112,19 +112,43 @@ export function codePointLabel(char: string): string {
   return `U+${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}`
 }
 
-/**
- * Marks tool-inserted chars as `⟨U+00AD⟩` (or `mark(label)`) and escapes line breaks, for console, report and
- * AI-prompt output.
- */
-export function escapeInvisible(text: string, mark = (label: string) => `⟨${label}⟩`): string {
-  if (!HAS_HIDDEN_RE.test(text)) return text
+/** `times` tool-inserted copies of one char in a row. */
+export interface InvisibleRun {
+  /** {@link codePointLabel} */
+  label: string
+  times: number
+}
+
+/** `text` as visible runs, line breaks escaped, between runs of tool-inserted chars. */
+export function invisibleRuns(text: string): (string | InvisibleRun)[] {
+  if (!HAS_HIDDEN_RE.test(text)) return [text]
   const chars = Array.from(text)
   const evasion = evasionIndices(chars)
-  return chars
-    .map((char, i) => {
-      if (WHITESPACE_CONTROLS.has(char)) return JSON.stringify(char).slice(1, -1)
-      return evasion.has(i) ? mark(codePointLabel(char)) : char
-    })
+  const runs: (string | InvisibleRun)[] = []
+  let visible = ''
+  chars.forEach((char, i) => {
+    if (!evasion.has(i)) {
+      visible += WHITESPACE_CONTROLS.has(char) ? JSON.stringify(char).slice(1, -1) : char
+      return
+    }
+    const label = codePointLabel(char)
+    const last = runs.at(-1)
+    if (!visible && typeof last === 'object' && last.label === label) {
+      last.times++
+      return
+    }
+    if (visible) runs.push(visible)
+    visible = ''
+    runs.push({ label, times: 1 })
+  })
+  if (visible) runs.push(visible)
+  return runs
+}
+
+/** Marks tool-inserted chars as `⟨U+00AD⟩` and escapes line breaks, for console, report and AI-prompt output. */
+export function escapeInvisible(text: string): string {
+  return invisibleRuns(text)
+    .map(run => (typeof run === 'string' ? run : `⟨${run.label}⟩`.repeat(run.times)))
     .join('')
 }
 

@@ -5,7 +5,7 @@ import { median } from '@/detect/timing'
 /** A send copies a line someone else sent this recently: it was still on screen */
 const COPY_WINDOW_MS = 60_000
 /** A copied line this many others had just sent is a chant; fewer, a +1 of someone's line */
-export const CHANT_USERS = 3
+const CHANT_USERS = 3
 /** Lines this short are reactions like 「？」 or 「牛逼」, typed alike without copying: counted only in a chant */
 const REACTION_LENGTH = 2
 /** Plain Latin, CJK, Hangul and full-width text has one grapheme per UTF-16 unit, so needs no segmenter */
@@ -20,16 +20,21 @@ const TOOL_PROOF = 0.5
 const SAMPLES_KEPT = 3
 const LAGS_KEPT = 64
 
-/** One copied send. */
-export interface CopySample {
+/** One copied send: a chant, or a +1, which names whose line it copied. */
+export type CopySample = CopiedLine | (CopiedLine & PlusOneSource)
+
+interface CopiedLine {
   at: number
   text: string
   /** Others who sent the line in the minute before */
   senders: number
-  /** For a +1: who sent the line last before the user */
-  from?: string
-  /** For a +1: how long after them, ms */
-  lagMs?: number
+}
+
+interface PlusOneSource {
+  /** Who sent the line last before the user */
+  from: string
+  /** How long after them, ms */
+  lagMs: number
 }
 
 /** A viewer's copying over the session, when it earns the 手动融入 mark. */
@@ -54,19 +59,10 @@ export interface ManualBlend {
   samples: CopySample[]
 }
 
-interface Habit {
-  roomId: number
-  uid: number
-  uname: string
-  sends: number
-  copies: number
-  chants: number
+interface Habit extends Omit<ManualBlend, 'sources' | 'plusOneLagMs'> {
   sources: Set<number>
-  switches: number
-  ownSwitches: number
   /** Latest +1 delays, ms */
   lags: number[]
-  samples: CopySample[]
   lastKey: string | null
   /** An assessment found automation proof */
   tool: boolean

@@ -1,15 +1,32 @@
 import type { Activity, Badges, GapHistogram, Lane } from '@/report/activity'
 import type { OfflineReport, ReportUser } from '@/report/report'
 import type { SkipReason } from '@/sources/events'
-import type { Pattern } from '@/types'
+import type { Pattern, Verdict } from '@/types'
 
-import { clip, escapeInvisible } from '@/detect/normalize'
-import { TIMELINE_CONTEXT_MS, userKey } from '@/report/activity'
-import { EVIDENCE_LABELS, GUARD_LABELS, PATTERN_LABELS, SKIP_LABELS, VERDICT_LABELS } from '@/report/labels'
+import { clip, invisibleRuns } from '@/detect/normalize'
+import { TIMELINE_CONTEXT_MS } from '@/report/activity'
+import {
+  EVIDENCE_LABELS,
+  GUARD_LABELS,
+  PATTERN_LABELS,
+  SKIP_LABELS,
+  USER_TYPE_LABELS,
+  VERDICT_LABELS,
+} from '@/report/labels'
 import SCRIPT from '@/report/page/script.js' with { type: 'text' }
 import STYLE from '@/report/page/style.css' with { type: 'text' }
-import { formatGap, formatScore } from '@/report/report'
-import { clock, count, dateTime, localDate, utcOffset, utcOffsets } from '@/util/console'
+import { formatGap, formatScore, nameOf, repeatsText, userKey } from '@/report/report'
+import {
+  clock,
+  count,
+  dateTime,
+  hourMinute,
+  localDate,
+  monthDay,
+  sameYear,
+  utcOffset,
+  utcOffsets,
+} from '@/util/console'
 
 export interface HtmlOptions {
   /** Archive file names for the header; never full paths, which can name the local user */
@@ -19,9 +36,6 @@ export interface HtmlOptions {
 }
 
 const REPO_URL = 'https://github.com/laplace-live/rinnegan'
-const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
-/** A run of one chip from {@link danmaku} */
-const CHIP_RUN_RE = /(<span class="cp">U\+[0-9A-F]{4,6}<\/span>)\1*/g
 
 /** Times within one line of text, which dates its first time and any later one on a new day. */
 interface LineClock {
@@ -41,29 +55,23 @@ interface Context {
   at: Clock
 }
 
-/** Text safe for HTML content and quoted attributes. */
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, char => ESCAPES[char] ?? char)
-}
-
 function chip(label: string): string {
   return `<span class="cp">${label}</span>`
 }
 
 /** Escaped danmaku with tool-inserted invisible chars as `U+00AD` chips; a run of one char collapses to `×n`. */
 function danmaku(text: string): string {
-  // Escaped first, so only chips match CHIP_RUN_RE: text that merely reads `⟨U+00AD⟩` stays text.
-  return escapeInvisible(escapeHtml(text), chip).replace(CHIP_RUN_RE, (run: string, one: string) => {
-    const times = run.length / one.length
-    return times > 1 ? one.replace('</span>', ` ×${times}</span>`) : one
-  })
+  return invisibleRuns(text)
+    .map(run =>
+      typeof run === 'string' ? Bun.escapeHTML(run) : chip(run.times > 1 ? `${run.label} ×${run.times}` : run.label)
+    )
+    .join('')
 }
 
 /** Local times, dated only when the archive spans more than one day. */
 function clockFor(from: number, to: number): Clock {
   const dated = localDate(from) !== localDate(to)
-  const sameYear = localDate(from).slice(0, 4) === localDate(to).slice(0, 4)
-  const day = (ms: number) => (sameYear ? localDate(ms).slice(5) : localDate(ms))
+  const day = sameYear(from, to) ? monthDay : localDate
   return {
     second: ms => (dated ? `${day(ms)} ${clock(ms)}` : clock(ms)),
     line: () => {
@@ -72,15 +80,15 @@ function clockFor(from: number, to: number): Clock {
         const date = localDate(ms)
         const prefix = dated && date !== shown ? `${day(ms)} ` : ''
         shown = date
-        return `${prefix}${clock(ms).slice(0, 5)}`
+        return `${prefix}${hourMinute(ms)}`
       }
       return {
         minute,
         range: (a, b) => {
           const start = minute(a)
           if (localDate(a) !== localDate(b)) return `${start} – ${minute(b)}`
-          const end = clock(b).slice(0, 5)
-          return end === clock(a).slice(0, 5) ? start : `${start}–${end}`
+          const end = hourMinute(b)
+          return end === hourMinute(a) ? start : `${start}–${end}`
         },
       }
     },
@@ -95,17 +103,13 @@ function cardId(user: { roomId: number; uid: number }): string {
   return `u-${user.roomId}-${user.uid}`
 }
 
-function nameOf(user: { uname: string }): string {
-  return user.uname || '(无名)'
-}
-
 /** What the room-wide traffic line counts. */
 function roomScope(report: OfflineReport): string {
   return report.archive.rooms.length > 1 ? '所有房间' : '全房间'
 }
 
 function link(href: string, html: string, cls = ''): string {
-  return `<a${cls ? ` class="${cls}"` : ''} href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${html}</a>`
+  return `<a${cls ? ` class="${cls}"` : ''} href="${Bun.escapeHTML(href)}" target="_blank" rel="noopener noreferrer">${html}</a>`
 }
 
 /** Danmaku per bucket, as a unit. */
@@ -129,8 +133,8 @@ export function renderHtml(report: OfflineReport, activity: Activity, options: H
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<meta name="generator" content="${escapeHtml(report.tool)}">
-<title>${escapeHtml(`${title} · Rinnegan 独轮车检测`)}</title>
+<meta name="generator" content="${Bun.escapeHTML(report.tool)}">
+<title>${Bun.escapeHTML(`${title} · Rinnegan 独轮车检测`)}</title>
 <style>
 ${STYLE}</style>
 <noscript><style>.chart { display: none; }</style></noscript>
@@ -164,9 +168,8 @@ function datesTitle({ report }: Context): string {
   const { messages, from, to } = report.archive
   if (messages === 0) return ''
   const start = localDate(from)
-  const end = localDate(to)
-  if (start === end) return start
-  return `${start} – ${start.slice(0, 4) === end.slice(0, 4) ? end.slice(5) : end}`
+  if (start === localDate(to)) return start
+  return `${start} – ${sameYear(from, to) ? monthDay(to) : localDate(to)}`
 }
 
 function header(ctx: Context): string {
@@ -175,13 +178,13 @@ function header(ctx: Context): string {
   const dates = datesTitle(ctx)
   const rooms = archive.rooms.map(room => {
     const host = activity.hosts.get(room)
-    return link(`https://live.bilibili.com/${room}`, `${host ? `${escapeHtml(host)} ` : ''}${room}`)
+    return link(`https://live.bilibili.com/${room}`, `${host ? `${Bun.escapeHTML(host)} ` : ''}${room}`)
   })
   const skipped = Object.entries(archive.skipped).map(
     ([reason, n]) => `${SKIP_LABELS[reason as SkipReason] ?? reason} ${count(n)}`
   )
   const rows: [string, string][] = [
-    ['归档', `${options.archives.map(escapeHtml).join('<br>')}（${escapeHtml(archive.format)}）`],
+    ['归档', `${options.archives.map(name => Bun.escapeHTML(name)).join('<br>')}（${Bun.escapeHTML(archive.format)}）`],
   ]
   if (rooms.length > 0) rows.push(['房间', rooms.join('、')])
   if (archive.messages > 0) {
@@ -191,11 +194,11 @@ function header(ctx: Context): string {
     ])
   }
   rows.push(['弹幕', `${count(archive.messages)} 条，${count(archive.users)} 名用户`])
-  if (skipped.length > 0) rows.push(['未计入', escapeHtml(skipped.join(' · '))])
-  rows.push(['生成', `${dateTime(Date.parse(report.generatedAt))} · ${escapeHtml(report.tool)}`])
+  if (skipped.length > 0) rows.push(['未计入', Bun.escapeHTML(skipped.join(' · '))])
+  rows.push(['生成', `${dateTime(Date.parse(report.generatedAt))} · ${Bun.escapeHTML(report.tool)}`])
   return `<header class="top wrap">
 <p class="eyebrow">LAPLACE Rinnegan 輪廻眼 · 离线检测报告</p>
-<h1>${escapeHtml(roomsTitle(ctx))}${dates ? ` ${nowrap(`· ${dates}`)}` : ''}</h1>
+<h1>${Bun.escapeHTML(roomsTitle(ctx))}${dates ? ` ${nowrap(`· ${dates}`)}` : ''}</h1>
 <p class="lede">回放 LAPLACE Chat 弹幕归档，找出用工具循环刷屏的独轮车。每位被标记的用户都附有判定证据、发送间隔和弹幕样本。</p>
 <dl class="meta">${rows.map(([term, value]) => `<dt>${term}</dt><dd>${value}</dd>`).join('')}</dl>
 </header>`
@@ -211,8 +214,8 @@ function patternMix(users: readonly ReportUser[]): string {
     .join(' · ')
 }
 
-function tile(dot: string, n: number, label: string, sub: string, mix = ''): string {
-  return `<div class="tile"><span class="num">${count(n)}</span><span class="lbl"><i class="dot ${dot}"></i>${label}</span><span class="sub">${sub}</span>${mix ? `<span class="mix">${mix}</span>` : ''}</div>`
+function tile(verdict: Verdict, n: number, sub: string, mix = ''): string {
+  return `<div class="tile"><span class="num">${count(n)}</span><span class="lbl"><i class="dot ${verdict}"></i>${VERDICT_LABELS[verdict]}</span><span class="sub">${sub}</span>${mix ? `<span class="mix">${mix}</span>` : ''}</div>`
 }
 
 function tiles({ report }: Context): string {
@@ -223,9 +226,9 @@ function tiles({ report }: Context): string {
   // `archive.users` counts uids across rooms
   const unflagged = report.archive.users - new Set(report.users.map(user => user.uid)).size
   return `<section class="tiles" aria-label="检测结果">
-${tile('spam', spam.length, '独轮车', banned, patternMix(spam))}
-${tile('suspect', suspects.length, '可疑', '默认只报告，不封禁', patternMix(suspects))}
-${tile('none', Math.max(0, unflagged), '正常', '未被标记的用户')}
+${tile('spam', spam.length, banned, patternMix(spam))}
+${tile('suspect', suspects.length, '默认只报告，不封禁', patternMix(suspects))}
+${tile('none', Math.max(0, unflagged), '未被标记的用户')}
 </section>`
 }
 
@@ -237,13 +240,13 @@ function timelines({ report, activity, at }: Context): string {
     const peak = Math.max(0, ...period.counts)
     return `<figure class="fig">
 <div class="fig-h"><h3>${range}</h3><p class="sub">${period.lanes.length} 名被标记用户 · ${room}峰值 ${count(peak)} ${perBucket(period.bucketMs)}</p></div>
-<div class="chart" data-period="${i}" data-label="${escapeHtml(`${range} 的弹幕时间线`)}"></div>
+<div class="chart" data-period="${i}" data-label="${Bun.escapeHTML(`${range} 的弹幕时间线`)}"></div>
 </figure>`
   })
   return `<section aria-labelledby="h-time">
 <h2 id="h-time">活跃时段</h2>
 <p class="sec-intro">每段标记前后 ${TIMELINE_CONTEXT_MS / 60_000} 分钟内的弹幕。顶部是${room}的弹幕量；每行一名被标记用户，竖线是其弹幕（越深越密集），下方色条是被判为独轮车或可疑的时段。点击用户名跳到详情。</p>
-<div class="legend"><span><i class="swatch-area"></i>${room}弹幕量</span><span><i class="swatch-tick"></i>该用户的弹幕</span><span><i class="swatch-bar spam"></i>独轮车</span><span><i class="swatch-bar suspect"></i>可疑</span></div>
+<div class="legend"><span><i class="swatch-area"></i>${room}弹幕量</span><span><i class="swatch-tick"></i>该用户的弹幕</span><span><i class="swatch-bar spam"></i>${VERDICT_LABELS.spam}</span><span><i class="swatch-bar suspect"></i>${VERDICT_LABELS.suspect}</span></div>
 ${figures.join('\n')}
 </section>`
 }
@@ -271,11 +274,11 @@ function card(ctx: Context, user: ReportUser): string {
   const uid = link(`https://space.bilibili.com/${user.uid}`, `UID ${user.uid}`, 'uid')
   return `<article class="card" id="${cardId(user)}">
 <div class="card-h">
-<div class="who"><span class="rank">#${user.rank}</span><h3>${escapeHtml(nameOf(user))}</h3>${uid}${badges(ctx.activity.badges.get(key))}</div>
+<div class="who"><span class="rank">#${user.rank}</span><h3>${Bun.escapeHTML(nameOf(user))}</h3>${uid}${badges(ctx.activity.badges.get(key))}</div>
 <span class="pill ${user.verdict}">${VERDICT_LABELS[user.verdict]} ${formatScore(user.score)}</span>
 </div>
 <p class="facts">${facts(ctx, user)}</p>
-${user.exempt ? `<p class="exempt"><b>豁免</b>实时模式不会封禁：${escapeHtml(user.exempt)}</p>` : ''}
+${user.exempt ? `<p class="exempt"><b>豁免</b>实时模式不会封禁：${Bun.escapeHTML(user.exempt)}</p>` : ''}
 ${evidence(user)}
 ${gaps ? gapFigure(user, gaps) : ''}
 ${lines(ctx, user)}
@@ -285,12 +288,11 @@ ${lines(ctx, user)}
 function badges(found: Badges | undefined): string {
   if (!found) return ''
   const out: string[] = []
-  if (found.userType === 100) out.push('<span class="badge">主播</span>')
-  else if (found.userType === 1) out.push('<span class="badge">房管</span>')
-  const guard = GUARD_LABELS[found.guardType]
-  if (guard) out.push(`<span class="badge">${guard}</span>`)
+  for (const label of [USER_TYPE_LABELS[found.userType], GUARD_LABELS[found.guardType]]) {
+    if (label) out.push(`<span class="badge">${label}</span>`)
+  }
   if (found.medalLevel > 0) {
-    const name = escapeHtml(found.medalName || '粉丝牌')
+    const name = Bun.escapeHTML(found.medalName || '粉丝牌')
     out.push(`<span class="medal" title="粉丝牌"><span>${name}</span><b>${found.medalLevel}</b></span>`)
   }
   return out.join('')
@@ -298,11 +300,7 @@ function badges(found: Badges | undefined): string {
 
 /** Pattern, volume and flagged times; only Rinnegan's own words and numbers, so no escaping. */
 function facts({ report, at }: Context, user: ReportUser): string {
-  const parts = [
-    PATTERN_LABELS[user.pattern],
-    `${count(user.messages)} 条弹幕`,
-    `${user.triggerHits ? '跟风命中' : '窗口内重复'} ${user.repeats} 次`,
-  ]
+  const parts = [PATTERN_LABELS[user.pattern], `${count(user.messages)} 条弹幕`, repeatsText(user)]
   if (report.archive.rooms.length > 1) parts.unshift(`房间 ${user.roomId}`)
   const line = at.line()
   const first = user.episodes[0]
@@ -334,7 +332,7 @@ function gapFigure(user: ReportUser, gaps: GapHistogram): string {
   const caption = [`相邻两条弹幕的间隔，0–${gaps.max} 秒，每格 ${gaps.binMs / 1000} 秒。`]
   if (gaps.tickMs) caption.push(`浅色竖线是 Rinnegan 拟合的 ${Math.round(gaps.tickMs / 10) / 100} 秒发送节拍的整数倍。`)
   if (gaps.over > 0) caption.push(`另有 ${count(gaps.over)} 个更长的间隔未显示。`)
-  const label = escapeHtml(`${nameOf(user)} 的发送间隔分布`)
+  const label = Bun.escapeHTML(`${nameOf(user)} 的发送间隔分布`)
   return `<figure class="fig inset"><div class="chart" data-gaps="${userKey(user)}" data-label="${label}"></div><figcaption>${caption.join('')}</figcaption></figure>`
 }
 
@@ -362,35 +360,40 @@ function notes({ report }: Context): string {
   return `<section aria-labelledby="h-notes" class="foot">
 <h2 id="h-notes">说明</h2>
 <p>分数 0–100，由 ${windowMs / 60_000} 分钟检测窗口内的重复次数与自动化证据（不可见字符、固定节拍、发送节拍、模板轮播、跟风触发等）算出。分数 ≥ ${spamScore} 且自动化证据 ≥ ${minAutomation} 判为独轮车，≥ ${suspectScore} 为可疑；单纯的重复（刷屏量）不算自动化证据。</p>
-<p>每位用户的模式、证据和样本取自其分数最高的时刻；标记时段是分数保持在可疑及以上的连续时间。工具插入的不可见字符显示为 <span class="cp">U+00AD</span> 这样的编号。</p>
-<p>时间为 ${report.archive.messages > 0 ? utcOffsets(report.archive.from, report.archive.to) : utcOffset(generatedAt)}。本报告是单个 HTML 文件，离线也能打开。由 ${link(REPO_URL, escapeHtml(report.tool))} 生成于 ${dateTime(generatedAt)}。</p>
+<p>每位用户的模式、证据和样本取自其分数最高的时刻；标记时段是分数保持在可疑及以上的连续时间。工具插入的不可见字符显示为 ${chip('U+00AD')} 这样的编号。</p>
+<p>时间为 ${report.archive.messages > 0 ? utcOffsets(report.archive.from, report.archive.to) : utcOffset(generatedAt)}。本报告是单个 HTML 文件，离线也能打开。由 ${link(REPO_URL, Bun.escapeHTML(report.tool))} 生成于 ${dateTime(generatedAt)}。</p>
 </section>`
 }
 
 function laneTip(lane: Lane, at: Clock): string {
   const name = nameOf(lane)
-  if (lane.firstAt === null || lane.lastAt === null) return `${name} · 本时段没有弹幕`
-  return `${name} · 本时段 ${count(lane.sends.length)} 条弹幕 · ${at.line().range(lane.firstAt, lane.lastAt)}`
+  const first = lane.sends[0]
+  const last = lane.sends.at(-1)
+  if (first === undefined || last === undefined) return `${name} · 本时段没有弹幕`
+  return `${name} · 本时段 ${count(lane.sends.length)} 条弹幕 · ${at.line().range(first, last)}`
 }
 
 /** What the chart script draws; times are seconds from each period's start. */
 function clientData({ report, activity, at }: Context) {
   return {
     room: roomScope(report),
-    periods: activity.periods.map(period => ({
-      span: (period.to - period.from) / 1000,
-      bucket: period.bucketMs / 1000,
-      unit: perBucket(period.bucketMs),
-      counts: period.counts,
-      ticks: period.ticks.map(tick => [(tick.at - period.from) / 1000, tick.label]),
-      lanes: period.lanes.map(lane => ({
-        href: `#${cardId(lane)}`,
-        name: nameOf(lane),
-        sends: lane.sends,
-        flagged: lane.flagged,
-        tip: laneTip(lane, at),
-      })),
-    })),
+    periods: activity.periods.map(period => {
+      const seconds = (ms: number) => Math.round((Math.min(Math.max(ms, period.from), period.to) - period.from) / 1000)
+      return {
+        span: (period.to - period.from) / 1000,
+        bucket: period.bucketMs / 1000,
+        unit: perBucket(period.bucketMs),
+        counts: period.counts,
+        ticks: period.ticks.map(tick => [(tick.at - period.from) / 1000, tick.label]),
+        lanes: period.lanes.map(lane => ({
+          href: `#${cardId(lane)}`,
+          name: nameOf(lane),
+          sends: lane.sends.map(seconds),
+          flagged: lane.episodes.map(episode => [seconds(episode.startAt), seconds(episode.endAt), episode.verdict]),
+          tip: laneTip(lane, at),
+        })),
+      }
+    }),
     gaps: Object.fromEntries(
       [...activity.gaps].map(([key, gaps]) => [
         key,
