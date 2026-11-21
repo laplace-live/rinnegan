@@ -6,6 +6,7 @@ dependencies and runs wherever modern JavaScript does: browsers, Bun, Node.js an
 
 ```bash
 bun add @laplace.live/rinnegan-sdk
+bun add @laplace.live/event-types   # optional peer: types the LaplaceEvents used below
 ```
 
 ## Judge danmaku as they arrive
@@ -31,11 +32,12 @@ function onEvent(event: LaplaceEvent) {
 
 `ingest` returns the sender's assessment after that message. `changed` is set when the verdict rose, or a flagged
 user's score climbed 5 points since the last change, so a UI can update without flicker. One `Detector` handles any
-number of rooms; it keeps a sliding window per user (`windowMs`, 10 minutes by default) and drops users idle for a
-whole window, so memory stays bounded in long sessions.
+number of rooms. It keeps each user's messages for a sliding window (`windowMs`, 10 minutes by default), but every
+flagged user's peak and episodes, and each viewer's 手动融入 tally, stay for the whole session: start a new `Detector`
+per stream to release them.
 
-`@laplace.live/event-types` is an optional peer dependency that types the events `toChatMessage` and `extractMessages`
-take; without it, keep `skipLibCheck` on. Danmaku from elsewhere can be passed to `ingest` directly as a `ChatMessage`.
+Without `@laplace.live/event-types`, keep `skipLibCheck` on, since the types of `toChatMessage` and `extractMessages`
+refer to it. Danmaku from elsewhere can be passed to `ingest` directly as a `ChatMessage`.
 
 ## Rank a whole archive
 

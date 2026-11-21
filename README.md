@@ -16,7 +16,7 @@ official silent-user API.
 
 ```bash
 bunx @laplace.live/rinnegan offline archive.lca
-bunx @laplace.live/rinnegan live --url ws://localhost:8080 --room 25034104          # dry run
+bunx @laplace.live/rinnegan live --url ws://localhost:8080 --room 25034104 --dry-run
 LOGIN_SYNC_TOKEN='uuid@password' bunx @laplace.live/rinnegan live --url ws://localhost:8080 --room 25034104
 bunx @laplace.live/rinnegan login                                                   # or log in by QR code instead
 ```
