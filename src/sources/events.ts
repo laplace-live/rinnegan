@@ -33,6 +33,7 @@ export function toChatMessage(event: Message, options: { includeMirror?: boolean
     guardType: num(event.guardType),
     isEmote: isRecord(emote) && typeof emote.emoticon_unique === 'string' && emote.emoticon_unique.length > 0,
     medalLevel: num(event.medal?.level),
+    medalName: typeof event.medal?.name === 'string' ? event.medal.name : '',
     isReply: num(readPath(event.reply, 'uid')) > 0,
   }
 }

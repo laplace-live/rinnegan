@@ -45,6 +45,13 @@ export function dateTime(ms: number): string {
   return `${localDate(ms)} ${clock(ms)}`
 }
 
+/** Local time zone at `ms` as `UTC+08:00`. */
+export function utcOffset(ms: number): string {
+  const minutes = -new Date(ms).getTimezoneOffset()
+  const abs = Math.abs(minutes)
+  return `UTC${minutes < 0 ? '-' : '+'}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+}
+
 /** `YYYYMMDD-HHMMSS` in local time, for file names. */
 export function fileStamp(ms: number): string {
   return dateTime(ms).replace(/[-:]/g, '').replace(' ', '-')

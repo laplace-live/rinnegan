@@ -27,6 +27,7 @@ describe('toChatMessage', () => {
       timestamp: 1000,
       guardType: 3,
       medalLevel: 21,
+      medalName: '绿冻',
       isEmote: false,
     })
   })

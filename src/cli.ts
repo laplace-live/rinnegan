@@ -46,7 +46,7 @@ offline
       --samples <n>         每条内容显示 n 个样本，默认 3
       --spam-only           不显示可疑用户
       --report-dir <dir>    报告目录，默认 ./reports
-      --no-report           不写 JSON / Markdown 报告
+      --no-report           不写 JSON / Markdown / HTML 报告
 
 live
   -u, --url <ws>            事件源地址，默认 ws://localhost:9696（LEF 桥接模式通常为 ws://host:8080）

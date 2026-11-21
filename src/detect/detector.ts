@@ -720,7 +720,7 @@ export class Detector {
       lattice.gaps >= 20 ? 0.9 : 0.85,
       `${percent(lattice.share)} 的间隔是 ${seconds(lattice.tickMs)} 发送节拍的整数倍（${lattice.gaps} 个间隔，${members.size} 条内容）`
     )
-    return candidate(found, repeats, members, { supporting: true })
+    return candidate({ ...found, tickMs: lattice.tickMs }, repeats, members, { supporting: true })
   }
 
   /** The session fingerprint's tick, when the lines repeated right now also sit on it (the tool is running now). */
@@ -734,7 +734,7 @@ export class Detector {
       0.85,
       `近 ${fingerprint.gaps} 个发送间隔中 ${percent(fingerprint.share)} 是 ${seconds(fingerprint.tickMs)} 节拍的整数倍，当前 ${members.size} 条重复内容仍落在该节拍上`
     )
-    return candidate(found, repeats, members, { supporting: true })
+    return candidate({ ...found, tickMs: fingerprint.tickMs }, repeats, members, { supporting: true })
   }
 
   /** Line changes that 自动融入's trigger predicts: the line it would have sent, right after it would have. */
