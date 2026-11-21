@@ -55,7 +55,7 @@ export interface DetectorOptions {
 }
 
 export const DEFAULT_DETECTOR_OPTIONS: DetectorOptions = {
-  windowMs: 10 * 60_000,
+  windowMs: 60 * 60_000,
   maxRecordsPerUser: 300,
   suspectScore: 60,
   spamScore: 90,

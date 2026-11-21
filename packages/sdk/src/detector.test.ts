@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import type { Assessment, ChatMessage } from './types.ts'
 
-import { Detector } from './detector.ts'
+import { DEFAULT_DETECTOR_OPTIONS, Detector } from './detector.ts'
 import {
   type AutoBlendOptions,
   INVISIBLE_PRESETS,
@@ -395,7 +395,7 @@ describe('chatterbox 自动融入 is caught', () => {
   test('an account back from idle on the line it left with still counts that switch', () => {
     const say = (uid: number, line: string, at: number) =>
       simulateFixedTimer({ persona: persona(uid), texts: [line], startAt: at, sends: 1, intervalMs: 1 })
-    // Flagged, so going idle keeps its state; it stops on 才八点, the line the swarm opens with 13 minutes later.
+    // Flagged, so going idle keeps its state; it stops on 才八点, the line the swarm opens with once a window has passed.
     const loop = simulateChatterboxLoop({
       persona: persona(421),
       template: '才八点',
@@ -405,7 +405,7 @@ describe('chatterbox 自动融入 is caught', () => {
     })
     const swarm: ChatMessage[] = []
     for (let r = 0; r < 9; r++) {
-      const at = T0 + 13 * MINUTE + r * 20_000
+      const at = T0 + DEFAULT_DETECTOR_OPTIONS.windowMs + 3 * MINUTE + r * 20_000
       const line = r === 0 ? '才八点' : `梗${r}`
       for (const [i, uid] of [31, 32, 33].entries()) swarm.push(...say(uid, line, at + i * 300))
       swarm.push(...say(420, line, at + 1600), ...say(421, line, at + 1650))
@@ -485,7 +485,10 @@ describe('humans are never judged spam', () => {
         sends: 80,
         random: seededRandom(seed),
       })
-      expect(judge(messages, 203).peak?.verdict).toBe('none')
+      // An hour holds enough repeats of a short line for `suspect` on volume, but never automation proof
+      const { peak } = judge(messages, 203)
+      expect(peak?.verdict).not.toBe('spam')
+      expect(peak?.proof).toBe(0)
     }
   })
 

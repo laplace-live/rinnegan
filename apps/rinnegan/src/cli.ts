@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { parseArgs } from 'node:util'
+import { DEFAULT_DETECTOR_OPTIONS } from '@laplace.live/rinnegan-sdk'
 
 import type { AiConfig } from '@/ai/types'
 import type { AiMode, ConfigLayer, RinneganConfig } from '@/config'
@@ -32,9 +33,9 @@ const HELP = `LAPLACE Rinnegan 輪廻眼 ${VERSION} — 识别并处置 B 站直
 通用选项
   -c, --config <file>       JSON 配置文件（默认读取 ./rinnegan.config.json）
   -r, --room <ids>          只看这些房间（逗号分隔，可重复）
-      --window <分钟>       检测窗口，默认 10
-      --spam-score <n>      判定独轮车的分数，默认 90
-      --suspect-score <n>   判定可疑的分数，默认 60
+      --window <分钟>       检测窗口，默认 ${DEFAULT_DETECTOR_OPTIONS.windowMs / 60_000}
+      --spam-score <n>      判定独轮车的分数，默认 ${DEFAULT_DETECTOR_OPTIONS.spamScore}
+      --suspect-score <n>   判定可疑的分数，默认 ${DEFAULT_DETECTOR_OPTIONS.suspectScore}
       --include-mirror      同时检测跨房弹幕
       --log-dir <dir>       审计日志目录，默认 ./logs
       --timezone <时区>     读取 --since / --until 与显示时间所用的时区，默认 Asia/Shanghai（UTC+8）

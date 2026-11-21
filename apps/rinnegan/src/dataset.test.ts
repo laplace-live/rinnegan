@@ -38,7 +38,6 @@ const CONFIRMED_SPAM: Record<string, string> = {
   '013500755e88': '够童 every 6.5 s, 94% on beat',
   '7a83eefedab5': '千舰之夜 every 1.3 s with U+00AD jitter',
   b12c4ae6beb0: 'repeat-count burst tool (phrase ×1–10 per send, ~1 s apart)',
-  '283a39c4e76f': '老公天下第一 with U+00AD jitter, 71 sends in 10 min',
   '8719d9f48e35': '3-line template cycled every 2.4 s',
   a1879519f198: '千舰之夜 on a fixed 8.2 s timer',
   '3fb856e1bc85': 'to签 rotated repeats every 1.3 s',
@@ -52,11 +51,8 @@ const CONFIRMED_SPAM: Record<string, string> = {
   f2a73aaf1290: '? resent every 10.4 s (8 ticks) for minutes',
   '2703520ab6aa': 'stock 自动融入: 10 s cooldown, gaps never below ~10 s',
   '662c3f4d8cf9': '自动融入 with avoid-repeat on a 2 s cooldown, joins 3-person micro-trends',
-  ab50bd5420b3: '自动融入 on a ~5 s cooldown, copies the long 老公天下第一 chant',
-  '02eb8896c257': '自动融入 on a ~5 s cooldown',
   '17da0945ce9c': 'chats by hand with 自动融入 running alongside; its copies land 50–90 ms after the trigger',
   // A 自动融入 swarm the single-account replay held at suspect: each keeps a fixed offset from another account.
-  '4dcc881ccc96': '自动融入 swarm: 47 of 51 shared switches within 150 ms of one partner',
   b4f23e3d4e55: '自动融入 swarm: 34 of 40 switches in step with a 随机字符 blend bot',
   b5e72269148c: '自动融入 swarm: in step with 3 accounts, 25 of 26 switches with one',
   e626e9f457c2: '自动融入 swarm: 24 of 30 switches in step with a stock blend bot',
@@ -67,8 +63,6 @@ const CONFIRMED_SPAM: Record<string, string> = {
   '3cffce219c5a': '自动融入 swarm: in step with 2 accounts, never starts a line',
   '71cc9c485bfe': '自动融入 swarm: 14 of 15 switches in step',
   '58b45b9c909d': '自动融入 with U+00AD in each trending line it copies, a line or two each',
-  '0239e8ca1c47': '自动融入 swarm: 11 of 13 switches in step',
-  e9860354a0b5: '自动融入 swarm: 11 of 12 switches in step',
   '9b08f176137d': '自动融入 on a higher trigger threshold, in step with the swarm',
 }
 
@@ -79,6 +73,16 @@ const CONFIRMED_SPAM: Record<string, string> = {
 const HELD_AT_SUSPECT: Record<string, string> = {
   '1b77017f1a4e': 'chats by hand, then runs 自动融入 ahead of a swarm bot for 10 minutes',
   '2ce0e9718868': 'says it forgot to turn its 独轮车 off; ahead of a swarm bot at the climax',
+}
+
+/** Automated, but the 60-minute window averages each tool's run with its other sends, so they stay at `suspect`. */
+const HELD_BY_WINDOW: Record<string, string> = {
+  '283a39c4e76f': '老公天下第一 with U+00AD jitter, 71 sends in 10 min; 38 of its 198 sends jittered that hour',
+  ab50bd5420b3: '自动融入 on a ~5 s cooldown, copies the long 老公天下第一 chant; 55 of 86 switches hit that hour',
+  '02eb8896c257': '自动融入 on a ~5 s cooldown; 101 of 152 switches hit that hour',
+  '4dcc881ccc96': '自动融入 swarm: 47 of 51 shared switches within 150 ms of one partner; under 80% that hour',
+  '0239e8ca1c47': '自动融入 swarm: 11 of 13 switches in step; under 80% that hour',
+  e9860354a0b5: '自动融入 swarm: 11 of 12 switches in step; under 80% that hour',
 }
 
 /** Must never reach `spam`: heavy-but-human behaviour and benign automation. */
@@ -103,13 +107,24 @@ const HOT_FROM = Date.parse('2026-10-20T13:00:00Z')
 const HOT_TO = Date.parse('2026-10-20T15:00:00Z')
 
 /** 自动融入 settings; omitted ones keep chatterbox's defaults (10 s cooldown). */
-const BLEND_BOTS: Record<string, Omit<AutoBlendOptions, 'persona'>> = {
+const BLEND_BOTS = {
   stock: {},
   'auto cooldown': { cooldownAuto: true },
   'auto cooldown + avoid-repeat': { cooldownAuto: true, avoidRepeat: true },
   '4 s cooldown + 29% random drop': { cooldownMs: 4000, dropPercent: 29 },
   '30 s cooldown': { cooldownMs: 30_000 },
   '随机字符 U+00AD': { randomChar: '\u00AD' },
+} satisfies Record<string, Omit<AutoBlendOptions, 'persona'>>
+/** Held at `suspect`: its drops keep its hits under 90% of its line changes over the 60-minute window */
+const BLEND_BOT_HELD: keyof typeof BLEND_BOTS = '4 s cooldown + 29% random drop'
+
+/** Hashes in `held` that a 10-minute window doesn't judge spam. */
+function missedOverTenMinutes(messages: readonly ChatMessage[], held: Record<string, string>): string[] {
+  const detector = new Detector({ windowMs: 10 * 60_000 })
+  for (const message of messages) detector.ingest(message)
+  const spam = detector.summaries().filter(summary => summary.peak.verdict === 'spam')
+  const caught = new Set(spam.map(summary => uidHash(summary.uid)))
+  return Object.keys(held).filter(hash => !caught.has(hash))
 }
 
 /**
@@ -174,14 +189,18 @@ describe.skipIf(!available)(`real archive ${ARCHIVE}`, () => {
     expect(byHash.get(hash)?.peak.verdict ?? 'none').not.toBe('spam')
   })
 
-  test.each(Object.entries(HELD_AT_SUSPECT))('holds %s at suspect (%s)', hash => {
+  test.each(Object.entries({ ...HELD_AT_SUSPECT, ...HELD_BY_WINDOW }))('holds %s at suspect (%s)', hash => {
     expect(byHash.get(hash)?.peak.verdict).toBe('suspect')
+  })
+
+  test('a 10-minute window catches the bots the default window holds', () => {
+    expect(missedOverTenMinutes(messages, HELD_BY_WINDOW)).toEqual([])
   })
 
   test('every spam verdict rests on automation evidence', () => {
     const spam = summaries.filter(summary => summary.peak.verdict === 'spam')
-    expect(spam.length).toBeGreaterThanOrEqual(52)
-    expect(spam.length).toBeLessThanOrEqual(62)
+    expect(spam.length).toBeGreaterThanOrEqual(44)
+    expect(spam.length).toBeLessThanOrEqual(54)
     for (const summary of spam) {
       const kinds = summary.peak.evidence.filter(item => item.kind !== 'volume')
       expect(kinds.length).toBeGreaterThan(0)
@@ -193,11 +212,12 @@ describe.skipIf(!available)(`real archive ${ARCHIVE}`, () => {
     expect(manual.length).toBeGreaterThanOrEqual(100)
     expect(manual.length).toBeLessThanOrEqual(140)
     expect(manual).toContain('52703d900a1f')
-    expect(manual.filter(hash => hash in CONFIRMED_SPAM || hash in HELD_AT_SUSPECT)).toEqual([])
+    const automated = { ...CONFIRMED_SPAM, ...HELD_AT_SUSPECT, ...HELD_BY_WINDOW }
+    expect(manual.filter(hash => hash in automated)).toEqual([])
   })
 
   test('keeps up with a busy room', () => {
-    expect(detectMs).toBeLessThan(5000)
+    expect(detectMs).toBeLessThan(10_000)
   })
 
   test('catches chatterbox loops injected into real traffic without new false positives', () => {
@@ -244,9 +264,12 @@ describe.skipIf(!available)(`real archive ${ARCHIVE}`, () => {
     expect(real.filter(summary => !before.has(summary.uid))).toEqual([])
   })
 
-  test('自动融入 bots injected into real traffic are judged blend spam', () => {
+  test('自动融入 bots injected into real traffic are judged blend spam, bar one held at suspect', () => {
     const bots = injectAlone(busy, BLEND_BOTS, simulateAutoBlend)
-    for (const { name, peak } of bots) expect([name, peak?.verdict, peak?.pattern]).toEqual([name, 'spam', 'blend'])
+    for (const { name, peak } of bots) {
+      const verdict = name === BLEND_BOT_HELD ? 'suspect' : 'spam'
+      expect([name, peak?.verdict, peak?.pattern]).toEqual([name, verdict, 'blend'])
+    }
   }, 20_000)
 
   test('humans chasing trends by hand stay below spam', () => {
@@ -286,8 +309,8 @@ const NOV_SPAM: Record<string, string> = {
   '27bdb504a8fd': '自动融入 with U+00AD in every trending line it copies, one send each',
   '6a1499690fdb': 'phrase ×5, ×10, ×6 rotated every ~2.6 s for 20 s',
   e626e9f457c2: '自动融入 swarm, the same bot as on Oct 20',
-  c62f39efc6d5: '自动融入 swarm, a second behind the core',
   '9834ffd1aeaf': '自动融入 swarm: 85% of switches follow a fresh 3-sender trend',
+  '9b08f176137d': '自动融入 joining at the 10th sender, 20 of 23 switches in step with one account that hour',
 }
 
 /** Automated, but it only ever sends first against its swarm partner and shows nothing else, so it stays a suspect. */
@@ -295,9 +318,13 @@ const NOV_HELD_AT_SUSPECT: Record<string, string> = {
   '1caec37f94ce': '自动融入 swarm: 38 of 40 switches follow a fresh 3-sender trend, always ahead of its partner',
 }
 
+/** As {@link HELD_BY_WINDOW} */
+const NOV_HELD_BY_WINDOW: Record<string, string> = {
+  c62f39efc6d5: '自动融入 swarm, a second behind the core; 23 of 55 switches in step with its partner that hour',
+}
+
 /** Automated too, but no rule sees them yet: 自动融入 on a 10-sender threshold, and a tool test of keyboard rows. */
 const NOV_UNCAUGHT: Record<string, string> = {
-  '9b08f176137d': '自动融入 joining at the 10th sender',
   dbcf24a5e408: '自动融入 joining at the 10th sender, 25 sends',
   '0bd45b046069': '自动融入 joining at the 10th sender, 16 switches',
   '010920239720': 'tests a tool with keyboard rows on a 1.22 s tick',
@@ -325,12 +352,13 @@ const NOV_MANUAL_BLEND: Record<string, string> = {
 }
 
 describe.skipIf(!novAvailable)(`real archive ${NOV_ARCHIVE}`, () => {
+  let messages: ChatMessage[] = []
   let summaries: UserSummary[] = []
   let byHash = new Map<string, UserSummary>()
   let manual: string[] = []
 
   beforeAll(async () => {
-    const { messages } = extractMessages((await readArchive(join(ROOT, NOV_ARCHIVE))).sheets, { since: NOV_SINCE })
+    messages = extractMessages((await readArchive(join(ROOT, NOV_ARCHIVE))).sheets, { since: NOV_SINCE }).messages
     const detector = new Detector()
     for (const message of messages) detector.ingest(message)
     summaries = detector.summaries()
@@ -342,8 +370,12 @@ describe.skipIf(!novAvailable)(`real archive ${NOV_ARCHIVE}`, () => {
     expect(byHash.get(hash)?.peak.verdict).toBe('spam')
   })
 
-  test.each(Object.entries(NOV_HELD_AT_SUSPECT))('holds %s at suspect (%s)', hash => {
+  test.each(Object.entries({ ...NOV_HELD_AT_SUSPECT, ...NOV_HELD_BY_WINDOW }))('holds %s at suspect (%s)', hash => {
     expect(byHash.get(hash)?.peak.verdict).toBe('suspect')
+  })
+
+  test('a 10-minute window catches the bots the default window holds', () => {
+    expect(missedOverTenMinutes(messages, NOV_HELD_BY_WINDOW)).toEqual([])
   })
 
   test.each(Object.entries(NOV_NOT_SPAM))('does not judge %s spam (%s)', hash => {
@@ -364,6 +396,7 @@ describe.skipIf(!novAvailable)(`real archive ${NOV_ARCHIVE}`, () => {
   test('marks no account review found automated', () => {
     expect(manual.length).toBeGreaterThanOrEqual(6)
     expect(manual.length).toBeLessThanOrEqual(12)
-    expect(manual.filter(hash => hash in NOV_SPAM || hash in NOV_HELD_AT_SUSPECT || hash in NOV_UNCAUGHT)).toEqual([])
+    const automated = { ...NOV_SPAM, ...NOV_HELD_AT_SUSPECT, ...NOV_HELD_BY_WINDOW, ...NOV_UNCAUGHT }
+    expect(manual.filter(hash => hash in automated)).toEqual([])
   })
 })

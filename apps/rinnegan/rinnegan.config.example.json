@@ -4,7 +4,7 @@
   "timeZone": "Asia/Shanghai",
   "storeUrl": "sqlite:data/rinnegan.sqlite",
   "detector": {
-    "windowMs": 600000,
+    "windowMs": 3600000,
     "suspectScore": 60,
     "spamScore": 90
   },
