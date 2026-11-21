@@ -46,6 +46,8 @@ export interface LockstepFit {
   switches: number
   /** Lines of those switches */
   keys: Set<string>
+  /** This user sends first against every one of them, as a viewer would whom a fast copier follows */
+  leads: boolean
 }
 
 function median(values: readonly number[]): number {
@@ -107,6 +109,7 @@ export class LockstepIndex {
     if (!ids) return null
     let best: { partner: number; inStep: number; paired: number; offsetMs: number } | null = null
     let partners = 0
+    let follows = false
     const switches = new Set<number>()
     const keys = new Set<string>()
     for (const id of ids) {
@@ -131,6 +134,7 @@ export class LockstepIndex {
       for (const offset of offsets) if (Math.abs(offset - offsetMs) <= STEP_MS) inStep++
       if (inStep < LOCKSTEP_MIN || inStep < LOCKSTEP_SHARE * paired) continue
       partners++
+      if (offsetMs >= 0) follows = true
       offsets.forEach((offset, i) => {
         if (Math.abs(offset - offsetMs) > STEP_MS) return
         switches.add((self ? pair.ta : pair.tb)[start + i] as number)
@@ -138,7 +142,7 @@ export class LockstepIndex {
       })
       if (!best || inStep > best.inStep) best = { partner: self ? pair.b : pair.a, inStep, paired, offsetMs }
     }
-    return best ? { ...best, partners, switches: switches.size, keys } : null
+    return best ? { ...best, partners, switches: switches.size, keys, leads: !follows } : null
   }
 
   /** Forget switches before `cutoff`, and pairs left with none. */

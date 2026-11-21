@@ -319,14 +319,18 @@ describe('chatterbox 自动融入 is caught', () => {
       expect(judge(mergeStreams(room, swarm[0] as ChatMessage[]), 410).peak?.verdict).not.toBe('spam')
     })
 
-    test('bots switching in step with each other are caught', () => {
+    test('bots switching in step with each other are caught, all but the one that always sends first', () => {
       const all = mergeStreams(room, ...swarm)
-      for (const uid of [410, 411, 412]) {
+      for (const uid of [411, 412]) {
         const { peak } = judge(all, uid)
         expect(peak?.verdict).toBe('spam')
         expect(peak?.pattern).toBe('blend')
         expect(peak?.evidence.find(item => item.kind === 'lockstep')?.weight).toBe(0.9)
       }
+      // Nothing but timing points at the fastest bot, and a copier following a viewer would time the same.
+      const leader = judge(all, 410).peak
+      expect(leader?.verdict).toBe('suspect')
+      expect(leader?.evidence.find(item => item.kind === 'lockstep')?.detail).toContain('总是先发')
     })
 
     test('随机字符 on every chant it copies', () => {
@@ -399,6 +403,21 @@ describe('chatterbox 自动融入 is caught', () => {
 
 describe('humans are never judged spam', () => {
   const SEEDS = 40
+
+  test('a viewer whom a fast copier follows on every chant they join', () => {
+    const room = chantRoom(40, [20_000, 40_000])
+    const viewer = simulateTrendChaser(room, { persona: persona(214), ...TREND_CHASERS.quick, random: seededRandom(3) })
+    // Answers each of the viewer's switches 200 ms later, so the pair keeps step; only the copier is automated.
+    const copier = viewer.map(message => ({
+      ...message,
+      id: `${message.id}-copy`,
+      uid: 215,
+      timestamp: message.timestamp + 200,
+    }))
+    const messages = mergeStreams(room, viewer, copier)
+    expect(judge(messages, 214).peak?.verdict).not.toBe('spam')
+    expect(judge(messages, 215).peak?.verdict).toBe('spam')
+  })
 
   test('chatting in Persian, whose spelling puts ZWNJ inside words', () => {
     const lines = ['روم', 'دانم', 'خواهم', 'بینم', 'گویم', 'نویسم', 'خورم', 'آیم', 'شنوم', 'پرسم'].map(

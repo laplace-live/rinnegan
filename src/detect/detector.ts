@@ -170,6 +170,13 @@ const RECENT_TICK_GAPS = 150
 const TRIGGER_GATE: TriggerGate = { hits: 12, share: 0.9, ruledOut: 3, contested: 3 }
 /** Partial 自动融入 evidence, too weak to ban alone */
 const TRIGGER_PARTIAL_GATE: TriggerGate = { hits: 8, share: 0.6, ruledOut: 3, contested: 0 }
+/**
+ * 多号同步 weight for an account that only ever sends first. A copier answering it within 400 ms would pair with it just
+ * the same, so leading proves nothing without other evidence; the follower still gets the full weight.
+ */
+const LEADING_LOCKSTEP_WEIGHT = 0.5
+/** Other automation evidence that lets a leading account's 多号同步 count in full */
+const LOCKSTEP_CORROBORATION = 0.5
 /** 自动融入 with 随机字符 moves on after a send or two, so its jitter shows across lines, not within one */
 const JITTERED_SENDS = 6
 const JITTERED_LINES = 5
@@ -650,14 +657,13 @@ export class Detector {
     const tick = this.#sendTick(evaluations) ?? this.#fingerprintTick(state, evaluations)
     // A blend bot may never repeat a line inside the window, so its replay competes even without a repeated line.
     const trigger = this.#trendTrigger(state, evaluations)
-    const lockstep = this.#lockstepWith(state, evaluations, at)
-    const candidates = [
-      this.#templateCycle(state, evaluations),
-      tick,
-      trigger,
-      this.#jitteredLines(state, evaluations),
-      lockstep,
-    ]
+    const others = [this.#templateCycle(state, evaluations), tick, trigger, this.#jitteredLines(state, evaluations)]
+    const backed = automationProof([
+      ...others.flatMap(option => (option ? [option.evidence] : [])),
+      ...(best?.evidence ?? []),
+    ])
+    const lockstep = this.#lockstepWith(state, evaluations, at, backed >= LOCKSTEP_CORROBORATION)
+    const candidates = [...others, lockstep]
     for (const option of candidates) {
       if (!option) continue
       const wins = this.#score(option.repeats, option.automation) > this.#score(repeats, automation)
@@ -792,18 +798,19 @@ export class Detector {
   }
 
   /** Line switches in step with other accounts: several 自动融入 instances answering one trigger together. */
-  #lockstepWith(state: UserState, evaluations: ClusterEval[], at: number): Candidate | null {
+  #lockstepWith(state: UserState, evaluations: ClusterEval[], at: number, backed: boolean): Candidate | null {
     const fit = this.#lockstep.fit(state.roomId, state.uid, at - this.options.windowMs)
     if (!fit) return null
     const partner = this.#users.get(`${state.roomId}:${fit.partner}`)?.uname || `uid ${fit.partner}`
     const others = fit.partners > 1 ? ` 等 ${fit.partners} 个账号` : ''
+    const weak = fit.leads && !backed
     const found = evidence(
       'lockstep',
-      0.9,
-      `与 ${partner}${others}同步换内容 ${fit.switches} 次（${fit.inStep}/${fit.paired} 次与其相差 ${Math.round(fit.offsetMs)}±150ms）`
+      weak ? LEADING_LOCKSTEP_WEIGHT : 0.9,
+      `与 ${partner}${others}同步换内容 ${fit.switches} 次（${fit.inStep}/${fit.paired} 次与其相差 ${Math.round(fit.offsetMs)}±150ms）${weak ? '，但总是先发，也可能是被人跟着发' : ''}`
     )
     const members = new Set(evaluations.filter(evaluation => fit.keys.has(evaluation.summary.key)))
-    return candidate(found, fit.switches, members, { pattern: 'blend', supporting: true, decisive: true })
+    return candidate(found, fit.switches, members, { pattern: 'blend', supporting: true, decisive: !weak })
   }
 
   /** Self-made invisible chars on most lines, each sent once or twice: 自动融入 with 随机字符 moving from trend to trend. */

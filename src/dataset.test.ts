@@ -67,9 +67,16 @@ const CONFIRMED_SPAM: Record<string, string> = {
   '58b45b9c909d': '自动融入 with U+00AD in each trending line it copies, a line or two each',
   '0239e8ca1c47': '自动融入 swarm: 11 of 13 switches in step',
   e9860354a0b5: '自动融入 swarm: 11 of 12 switches in step',
-  '1b77017f1a4e': 'chats by hand, then runs 自动融入 in step with a swarm bot for 10 minutes',
   '9b08f176137d': '自动融入 on a higher trigger threshold, in step with the swarm',
-  '2ce0e9718868': 'says it forgot to turn its 独轮车 off; in step with a swarm bot at the climax',
+}
+
+/**
+ * Automated, but they only ever send first against their swarm partner and show nothing else. A copier following a
+ * viewer within 400 ms would look the same from the viewer's side, so they stay at `suspect`.
+ */
+const HELD_AT_SUSPECT: Record<string, string> = {
+  '1b77017f1a4e': 'chats by hand, then runs 自动融入 ahead of a swarm bot for 10 minutes',
+  '2ce0e9718868': 'says it forgot to turn its 独轮车 off; ahead of a swarm bot at the climax',
 }
 
 /** Must never reach `spam`: heavy-but-human behaviour and benign automation. */
@@ -165,6 +172,10 @@ describe.skipIf(!available)(`real archive ${ARCHIVE}`, () => {
     expect(byHash.get(hash)?.peak.verdict ?? 'none').not.toBe('spam')
   })
 
+  test.each(Object.entries(HELD_AT_SUSPECT))('holds %s at suspect (%s)', hash => {
+    expect(byHash.get(hash)?.peak.verdict).toBe('suspect')
+  })
+
   test('every spam verdict rests on automation evidence', () => {
     const spam = summaries.filter(summary => summary.peak.verdict === 'spam')
     expect(spam.length).toBeGreaterThanOrEqual(52)
@@ -180,7 +191,7 @@ describe.skipIf(!available)(`real archive ${ARCHIVE}`, () => {
     expect(manual.length).toBeGreaterThanOrEqual(100)
     expect(manual.length).toBeLessThanOrEqual(140)
     expect(manual).toContain('52703d900a1f')
-    expect(manual.filter(hash => hash in CONFIRMED_SPAM)).toEqual([])
+    expect(manual.filter(hash => hash in CONFIRMED_SPAM || hash in HELD_AT_SUSPECT)).toEqual([])
   })
 
   test('keeps up with a busy room', () => {
@@ -271,11 +282,15 @@ const NOV_SPAM: Record<string, string> = {
   c98b63f32f33: '自动融入 swarm: 21 of 21 switches fit the replay, but only 2 contested',
   '10e046d1ce6c': '自动融入 swarm: 158 of 169 shared switches within 150 ms of one partner',
   '27bdb504a8fd': '自动融入 with U+00AD in every trending line it copies, one send each',
-  '1caec37f94ce': '自动融入 swarm: 38 of 40 switches follow a fresh 3-sender trend',
   '6a1499690fdb': 'phrase ×5, ×10, ×6 rotated every ~2.6 s for 20 s',
   e626e9f457c2: '自动融入 swarm, the same bot as on Oct 20',
   c62f39efc6d5: '自动融入 swarm, a second behind the core',
   '9834ffd1aeaf': '自动融入 swarm: 85% of switches follow a fresh 3-sender trend',
+}
+
+/** Automated, but it only ever sends first against its swarm partner and shows nothing else, so it stays a suspect. */
+const NOV_HELD_AT_SUSPECT: Record<string, string> = {
+  '1caec37f94ce': '自动融入 swarm: 38 of 40 switches follow a fresh 3-sender trend, always ahead of its partner',
 }
 
 /** Automated too, but no rule sees them yet: 自动融入 on a 10-sender threshold, and a tool test of keyboard rows. */
@@ -325,6 +340,10 @@ describe.skipIf(!novAvailable)(`real archive ${NOV_ARCHIVE}`, () => {
     expect(byHash.get(hash)?.peak.verdict).toBe('spam')
   })
 
+  test.each(Object.entries(NOV_HELD_AT_SUSPECT))('holds %s at suspect (%s)', hash => {
+    expect(byHash.get(hash)?.peak.verdict).toBe('suspect')
+  })
+
   test.each(Object.entries(NOV_NOT_SPAM))('does not judge %s spam (%s)', hash => {
     expect(byHash.get(hash)?.peak.verdict ?? 'none').not.toBe('spam')
   })
@@ -343,6 +362,6 @@ describe.skipIf(!novAvailable)(`real archive ${NOV_ARCHIVE}`, () => {
   test('marks no account review found automated', () => {
     expect(manual.length).toBeGreaterThanOrEqual(6)
     expect(manual.length).toBeLessThanOrEqual(12)
-    expect(manual.filter(hash => hash in NOV_SPAM || hash in NOV_UNCAUGHT)).toEqual([])
+    expect(manual.filter(hash => hash in NOV_SPAM || hash in NOV_HELD_AT_SUSPECT || hash in NOV_UNCAUGHT)).toEqual([])
   })
 })
