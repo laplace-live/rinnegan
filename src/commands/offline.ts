@@ -6,6 +6,8 @@ import type { RinneganConfig } from '@/config'
 import { AuditLog } from '@/audit/audit'
 import { Detector } from '@/detect/detector'
 import { banEligibility } from '@/enforce/policy'
+import { buildActivity } from '@/report/activity'
+import { renderHtml } from '@/report/html'
 import { buildReport, renderConsole, renderMarkdown } from '@/report/report'
 import { extractMessages, readArchive } from '@/sources/archive'
 import { count, fileStamp, log, style } from '@/util/console'
@@ -21,7 +23,7 @@ export interface OfflineOptions {
   top: number
   suspects: boolean
   samples: number
-  /** Write JSON / Markdown reports into `config.reportDir` */
+  /** Write JSON, Markdown and HTML reports into `config.reportDir` */
   writeFiles: boolean
 }
 
@@ -93,9 +95,15 @@ export async function runOffline(options: OfflineOptions): Promise<number> {
     const name = `${basename(options.files[0] ?? 'archive').replace(/\.(lca|json)$/i, '')}-${fileStamp(startedAt)}`
     const jsonPath = join(config.reportDir, `${name}.json`)
     const markdownPath = join(config.reportDir, `${name}.md`)
+    const htmlPath = join(config.reportDir, `${name}.html`)
+    const html = renderHtml(report, buildActivity(messages, report.users), {
+      archives: options.files.map(file => basename(file)),
+      samples: options.samples,
+    })
     await Bun.write(jsonPath, `${JSON.stringify(report, null, 2)}\n`)
     await Bun.write(markdownPath, renderMarkdown(report))
-    written.push(jsonPath, markdownPath)
+    await Bun.write(htmlPath, html)
+    written.push(jsonPath, markdownPath, htmlPath)
   }
 
   audit.write('session-end', {

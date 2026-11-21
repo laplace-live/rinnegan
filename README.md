@@ -5,8 +5,8 @@
 Detects **独轮车** (automated danmaku spammers looping the same or slightly mutated lines, typically via tools like
 [LAPLACE Chatterbox](https://laplace.live/chatterbox)) in Bilibili Live rooms, and mutes them through Bilibili's
 official silent-user API.
-- **Offline**: replay a [LAPLACE Chat](https://chat.laplace.live) archive (`.lca`) and rank spammers with message
-  samples.
+- **Offline**: replay a [LAPLACE Chat](https://chat.laplace.live) archive (`.lca`), rank spammers with message
+  samples, and export the results as an HTML report anyone can open in a browser.
 - **Live**: stream events from [LAPLACE Event Fetcher](https://subspace.institute/docs/laplace-chat/event-fetcher)
   (bridge mode) or LAPLACE Event Bridge, score senders in real time, and ban spammers with a reason. Without a
   [LAPLACE Login Sync](https://github.com/laplace-live/login-sync) token or QR code login, it runs in dry-run mode.
@@ -81,9 +81,9 @@ a line someone else sent in the minute before (a chant 3+ others were sending, o
 copies make up at least half of their text. At least 20% of their line changes also go to lines nobody else had just
 sent, and none of their assessments found automation proof of 0.5 or more. One- and two-character reactions such as
 「？」 count only as part of a chant. Accounts left to 自动融入 write almost nothing of their own (under 12% of line
-changes on both archives), so they never qualify. The mark only labels a habit: offline reports list these viewers and
-tag flagged ones, live mode tags the suspect lines `--verbose` prints and lists them in the `session-end` audit
-event, and it never bans or exempts anyone.
+changes on both archives), so they never qualify. The mark only labels a habit: the console, Markdown and JSON reports
+list these viewers and tag flagged ones, live mode tags the suspect lines `--verbose` prints and lists them in the
+`session-end` audit event, and it never bans or exempts anyone.
 
 ### Accuracy
 
@@ -201,8 +201,13 @@ rinnegan offline a.lca b.lca --room 25034104 --since '2026-10-20 20:00' --top 50
 Accepts gzip- and zstd-compressed `.lca` archives as well as raw JSON exports (pre-2026 lz-string archives must be
 re-exported from a current build of LAPLACE Chat). Prints detected spammers followed by suspects—with evidence and
 message samples (rendering invisible characters like `⟨U+00AD⟩`)—then viewers marked 手动融入 with what they copied and
-from whom, and writes JSON and Markdown reports to `reports/` (`--no-report` to skip; `--spam-only` prints spammers
-alone). Timestamps use local time; set `TZ=Asia/Shanghai` for China Standard Time.
+from whom, and writes JSON, Markdown, and HTML reports to `reports/` (`--no-report` to skip; `--spam-only` prints
+spammers alone). Timestamps use local time; set `TZ=Asia/Shanghai` for China Standard Time.
+
+The HTML report is a single self-contained file: styles, charts, and data are inline and nothing loads from the
+network, so it opens offline in any modern browser and can be shared as is. Next to each flagged user's evidence and
+samples, it charts when they were active against the whole room's traffic and how far apart their sends were, with
+the send tick Rinnegan fitted. It names archives by file name only, never by their local path.
 
 ## Configuration
 

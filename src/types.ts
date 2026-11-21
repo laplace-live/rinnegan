@@ -17,6 +17,8 @@ export interface ChatMessage {
   isEmote: boolean
   /** Fan medal level, 0 when none is worn */
   medalLevel: number
+  /** Fan medal name, for reports */
+  medalName?: string
   /** @-reply to another viewer */
   isReply: boolean
 }
@@ -65,6 +67,8 @@ export interface Evidence {
   weight: number
   /** Human-readable explanation */
   detail: string
+  /** Send-queue tick (ms) a `send-tick` item fitted */
+  tickMs?: number
 }
 
 export interface Sample {

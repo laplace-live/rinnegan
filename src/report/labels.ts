@@ -1,3 +1,4 @@
+import type { SkipReason } from '@/sources/events'
 import type { EvidenceKind, Pattern, Verdict } from '@/types'
 
 export const PATTERN_LABELS: Record<Pattern, string> = {
@@ -25,4 +26,15 @@ export const EVIDENCE_LABELS: Record<EvidenceKind, string> = {
   'trend-trigger': '跟风触发',
   lockstep: '多号同步',
   volume: '刷屏量',
+}
+
+/** By `ChatMessage.guardType` */
+export const GUARD_LABELS: Record<number, string> = { 1: '总督', 2: '提督', 3: '舰长' }
+
+export const SKIP_LABELS: Record<SkipReason, string> = {
+  anonymous: '匿名弹幕',
+  'auto-danmaku': '红包/天选弹幕',
+  mirror: '跨房弹幕',
+  empty: '空弹幕',
+  mock: '模拟弹幕',
 }

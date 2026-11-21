@@ -106,8 +106,18 @@ export function buildReport(options: {
   }
 }
 
+/** Score with one decimal, `100` without. */
+export function formatScore(score: number): string {
+  return score.toFixed(score >= 99.95 ? 0 : 1)
+}
+
+/** Median gap as `1.3s`, `—` when there is none. */
+export function formatGap(ms: number): string {
+  return ms > 0 ? `${(ms / 1000).toFixed(1)}s` : '—'
+}
+
 function verdictBadge(verdict: Verdict, score: number): string {
-  const text = `${VERDICT_LABELS[verdict]} ${score.toFixed(score >= 99.95 ? 0 : 1)}`
+  const text = `${VERDICT_LABELS[verdict]} ${formatScore(score)}`
   return verdict === 'spam' ? style.red(style.bold(text)) : style.yellow(text)
 }
 
@@ -161,7 +171,7 @@ export function renderConsole(
       }
       for (const cluster of user.clusters.slice(0, 2)) {
         lines.push(
-          `   「${escapeInvisible(clip(cluster.key, 40))}」×${cluster.count} · ${cluster.variants} 种写法 · 中位间隔 ${gap(cluster.medianGapMs)}${cluster.crowd ? ` · 同时 ${cluster.crowd} 人在刷` : ''}`
+          `   「${escapeInvisible(clip(cluster.key, 40))}」×${cluster.count} · ${cluster.variants} 种写法 · 中位间隔 ${formatGap(cluster.medianGapMs)}${cluster.crowd ? ` · 同时 ${cluster.crowd} 人在刷` : ''}`
         )
         for (const sample of cluster.samples.slice(0, options.samples)) {
           lines.push(style.gray(`      ${clock(sample.timestamp)}  ${escapeInvisible(sample.text)}`))
@@ -190,17 +200,13 @@ export function renderConsole(
   return lines.join('\n')
 }
 
-function gap(ms: number): string {
-  return ms > 0 ? `${(ms / 1000).toFixed(1)}s` : '—'
-}
-
 /** e.g. `复读 43/67 条（跟队形 18 条，+1 了 23 人的 25 条，通常比原弹幕晚 6.3s），自己说的 24 条` */
 function describeCopying(blend: ManualBlend): string {
   const parts: string[] = []
   if (blend.chants > 0) parts.push(`跟队形 ${blend.chants} 条`)
   const plusOnes = blend.copies - blend.chants
   if (plusOnes > 0) {
-    const lag = blend.plusOneLagMs === null ? '' : `，通常比原弹幕晚 ${gap(blend.plusOneLagMs)}`
+    const lag = blend.plusOneLagMs === null ? '' : `，通常比原弹幕晚 ${formatGap(blend.plusOneLagMs)}`
     parts.push(`+1 了 ${blend.sources} 人的 ${plusOnes} 条${lag}`)
   }
   return `复读 ${blend.copies}/${blend.sends} 条（${parts.join('，')}），自己说的 ${blend.sends - blend.copies} 条`
@@ -215,7 +221,7 @@ function copySample(sample: CopySample): string {
   const line = `「${escapeInvisible(clip(sample.text, 40))}」`
   return sample.senders >= CHANT_USERS
     ? `${line} 跟 ${sample.senders} 人一起刷`
-    : `${line} 复读 ${sample.from}，晚 ${gap(sample.lagMs)}`
+    : `${line} 复读 ${sample.from}，晚 ${formatGap(sample.lagMs)}`
 }
 
 function cell(text: string): string {
@@ -268,7 +274,7 @@ export function renderMarkdown(report: OfflineReport): string {
     for (const cluster of user.clusters) {
       out.push(
         '',
-        `「${cell(escapeInvisible(cluster.key))}」×${cluster.count}，${cluster.variants} 种写法，中位间隔 ${gap(cluster.medianGapMs)}，同时 ${cluster.crowd} 人在刷`,
+        `「${cell(escapeInvisible(cluster.key))}」×${cluster.count}，${cluster.variants} 种写法，中位间隔 ${formatGap(cluster.medianGapMs)}，同时 ${cluster.crowd} 人在刷`,
         ''
       )
       for (const sample of cluster.samples)
@@ -283,7 +289,7 @@ export function renderMarkdown(report: OfflineReport): string {
     report.manualBlends.forEach((blend, index) => {
       const sample = blend.samples.at(-1)
       out.push(
-        `| ${index + 1} | ${cell(blend.uname)} | ${blend.uid} | ${blend.copies}/${blend.sends} | ${blend.chants} | ${plusOneCell(blend)} | ${blend.sends - blend.copies} | ${blend.plusOneLagMs === null ? '—' : gap(blend.plusOneLagMs)} | ${sample ? cell(copySample(sample)) : ''} |`
+        `| ${index + 1} | ${cell(blend.uname)} | ${blend.uid} | ${blend.copies}/${blend.sends} | ${blend.chants} | ${plusOneCell(blend)} | ${blend.sends - blend.copies} | ${blend.plusOneLagMs === null ? '—' : formatGap(blend.plusOneLagMs)} | ${sample ? cell(copySample(sample)) : ''} |`
       )
     })
   }

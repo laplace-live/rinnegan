@@ -114,7 +114,10 @@ describe('chatterbox 独轮车 is caught', () => {
     const { peak, spamAfter } = judge(messages, 101)
     expect(peak?.verdict).toBe('spam')
     expect(spamAfter).toBeLessThanOrEqual(16)
-    expect(peak?.evidence.map(item => item.kind)).toContain('send-tick')
+    const tick = peak?.evidence.find(item => item.kind === 'send-tick')
+    // The 1010 ms queue gap plus this persona's request latency
+    expect(tick?.tickMs).toBeGreaterThanOrEqual(1150)
+    expect(tick?.tickMs).toBeLessThanOrEqual(1450)
   })
 
   test.each([5, 10, 30])('fixed %d s interval', intervalSec => {
