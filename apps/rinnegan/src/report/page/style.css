@@ -11,17 +11,22 @@
   --muted: #74728a;
   --hair: #e4e2ec;
   --axis: #c6c4d2;
+  /* One meaning per color, page-wide; each group below is checked apart for color-blind readers in both modes */
+  /* Brand: links, controls, chips and medals, never data */
   --accent: #5b46c9;
-  --accent-wash: #eeebfb;
-  --ring: rgba(91, 70, 201, 0.14);
+  /* Who a user is: verdicts and the 手动融入 mark, always beside their name */
   --spam: #d03b3b;
-  --suspect: #f2a900;
+  --suspect: #fab219;
+  --manual: #1baf7a;
   --none: #9a98aa;
-  /* 手动融入: one teal ramp, darkest for chants (and the mark), lightest for own lines */
-  --manual: #007a7b;
-  --manual-plus: #289f9f;
-  --manual-own: #70c1c1;
-  --manual-wash: #ebf6f6;
+  /* How a danmaku was made: side by side in bars and lists, so a hue each */
+  --chant: #2a78d6;
+  --plus-one: #e87ba4;
+  --own: #008300;
+  /* Tints from their color and the surface, so dark mode needs none of its own */
+  --accent-wash: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  --manual-wash: color-mix(in srgb, var(--manual) 10%, var(--surface));
+  --ring: color-mix(in srgb, var(--accent) 14%, transparent);
   --font-body:
     -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
     "Noto Sans SC", "Segoe UI", system-ui, sans-serif;
@@ -40,14 +45,12 @@
     --hair: #2a2833;
     --axis: #423f4e;
     --accent: #a898f6;
-    --accent-wash: #241f3e;
-    --ring: rgba(168, 152, 246, 0.14);
     --none: #6c6a7d;
-    /* On dark the ramp flips: own lines take the step nearest the surface */
-    --manual: #40c1bd;
-    --manual-plus: #0f9293;
-    --manual-own: #196464;
-    --manual-wash: #142b2c;
+    /* The same hues, stepped for the dark surface */
+    --manual: #199e70;
+    --chant: #3987e5;
+    --plus-one: #d55181;
+    --own: #0ca30c;
   }
 }
 
@@ -143,6 +146,13 @@ h2 {
 h3 {
   font-size: 1rem;
   line-height: 1.35;
+  font-weight: 600;
+  margin: 0;
+}
+
+h4 {
+  font-size: 13px;
+  line-height: 1.4;
   font-weight: 600;
   margin: 0;
 }
@@ -274,22 +284,26 @@ section {
 }
 
 .dot.manual,
+.manual-note a::before {
+  background: var(--manual);
+}
+
 .swatch-seg.chant,
 .copy-bar .chant,
-.kind.chant {
-  background: var(--manual);
+.via.chant::before {
+  background: var(--chant);
 }
 
 .swatch-seg.plus-one,
 .copy-bar .plus-one,
-.kind.plus-one {
-  background: var(--manual-plus);
+.via.plus-one::before {
+  background: var(--plus-one);
 }
 
 .swatch-seg.own,
 .copy-bar .own,
-.kind.own {
-  background: var(--manual-own);
+.via.own::before {
+  background: var(--own);
 }
 
 .fig {
@@ -312,6 +326,11 @@ section {
 .fig-h .sub {
   font-size: 12.5px;
   color: var(--muted);
+}
+
+.fig-h .sub strong {
+  color: var(--ink);
+  font-weight: 600;
 }
 
 .chart {
@@ -415,12 +434,6 @@ svg a:focus-visible .tx {
 
 .m-suspect {
   fill: var(--suspect);
-}
-
-.guide {
-  stroke: var(--accent);
-  stroke-opacity: 0.4;
-  stroke-width: 1;
 }
 
 .area {
@@ -581,8 +594,17 @@ a.pill {
   font-size: 13px;
 }
 
+/* Named in ink beside its dot, as the tiles name it */
 .manual-note a {
-  color: var(--manual);
+  margin-right: 6px;
+}
+
+.manual-note a::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
   margin-right: 6px;
 }
 
@@ -701,13 +723,16 @@ a.pill {
   margin-left: 8px;
 }
 
-.kind {
+.via.chant::before,
+.via.plus-one::before,
+.via.own::before {
+  content: "";
   display: inline-block;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   margin-right: 5px;
-  vertical-align: 1px;
+  vertical-align: 0;
 }
 
 summary {
@@ -747,6 +772,106 @@ summary {
   max-width: 66ch;
 }
 
+/* 打码: fixed, so it is at hand wherever the screenshot is taken */
+.mask {
+  position: fixed;
+  z-index: 20;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 7px;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink-2);
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mask input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+
+.knob {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--axis);
+  transition: background-color 0.15s;
+}
+
+.knob::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s;
+}
+
+.mask:has(input:checked) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mask input:checked + .knob {
+  background: var(--accent);
+}
+
+.mask input:checked + .knob::after {
+  transform: translateX(12px);
+}
+
+.mask input:focus-visible + .knob {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knob,
+  .knob::after {
+    transition: none;
+  }
+}
+
+.defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+:root:has(#mask:checked) .pii {
+  filter: blur(0.35em);
+  user-select: none;
+}
+
+/* WebKit ignores CSS blur() on SVG elements */
+:root:has(#mask:checked) svg .pii {
+  filter: url(#pii-blur);
+}
+
+/* Hovering a UID link would show it in the status bar */
+:root:has(#mask:checked) .uid {
+  pointer-events: none;
+}
+
 #tip {
   position: fixed;
   z-index: 30;
@@ -767,6 +892,7 @@ summary {
   }
 
   .top::before,
+  .mask,
   #tip {
     display: none;
   }

@@ -34,9 +34,9 @@ function onEvent(event: LaplaceEvent) {
 user's score climbed 5 points since the last change, so a UI can update without flicker. One `Detector` handles any
 number of rooms. It keeps each user's messages for a sliding window (`windowMs`, 60 minutes by default), up to their
 last 300 (`maxRecordsPerUser`), but every flagged user's peak and episodes, and each viewer's 手动融入 tally, stay for
-the whole session: start a new `Detector` per stream to release them. `manualHistory: true` also keeps every text
-danmaku the tally counts, so a 手动融入 viewer's `history` lists each one as a chant, a +1 or a line of their own; that
-grows with every danmaku, so leave it off in long live sessions.
+the whole session: start a new `Detector` per stream to release them. Every text danmaku the tally counts is kept
+too, so a 手动融入 viewer's `history`, and a flagged user's in `summaries()`, lists each one as a chant, a +1 or a line
+of their own; that grows with every danmaku, so pass `manualHistory: false` for long live sessions.
 
 Without `@laplace.live/event-types`, keep `skipLibCheck` on, since the types of `toChatMessage` and `extractMessages`
 refer to it. Danmaku from elsewhere can be passed to `ingest` directly as a `ChatMessage`.
@@ -61,7 +61,8 @@ const copiers = detector.manualBlends() // 手动融入: viewers who copy the ro
   evidence (`proof` ≥ `minAutomation`).
 - `score`: 0–100, from the repeats in the window weighted by how sure the evidence is.
 - `pattern`: `loop`, `burst`, `template`, `blend` (a trend-following bot such as Chatterbox's 自动融入) or `flood`.
-- `evidence`: what proves automation, each with a `kind`, a 0–1 `weight` and a `detail` in Chinese.
+- `evidence`: what proves automation, each with a `kind`, a 0–1 `weight` and a `detail` in Chinese, plus the other
+  viewers' `names` that `detail` quotes, for a UI that hides them.
 - `clusters`: the user's top repeated lines, with sample messages.
 
 `VERDICT_LABELS`, `PATTERN_LABELS`, `EVIDENCE_LABELS`, `SKIP_LABELS`, `GUARD_LABELS` and `USER_TYPE_LABELS` hold the

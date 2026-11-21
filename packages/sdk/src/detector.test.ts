@@ -362,6 +362,12 @@ describe('chatterbox 自动融入 is caught', () => {
       expect(detail).not.toContain('414')
     })
 
+    test('lists the partner it names, so reports can hide it', () => {
+      const found = judge(mergeStreams(room, ...swarm), 411).peak?.evidence.find(item => item.kind === 'lockstep')
+      expect(found?.names).toEqual([expect.stringMatching(/^user41[02]$/)])
+      expect(found?.detail).toContain(`与 ${found?.names?.[0]}`)
+    })
+
     test('hand-chasers joining the same chants as the swarm stay below spam', () => {
       for (let seed = 1; seed <= 4; seed++) {
         const human = simulateTrendChaser(room, {
@@ -565,11 +571,32 @@ describe('手动融入 marks viewers who mostly copy the room by hand', () => {
     expect(manualBlendOf(mergeStreams(CROWD, chat(502, 40)), 502)).toBeNull()
   })
 
-  test('lists every counted send with manualHistory', () => {
+  test('lists every counted send unless manualHistory is off', () => {
     const room = mergeStreams(CROWD, simulatePlusOne(CROWD, persona(500), 100), chat(500, 30))
-    expect(manualBlendOf(room, 500)).not.toHaveProperty('history')
-    const blend = manualBlendOf(room, 500, { manualHistory: true })
+    const blend = manualBlendOf(room, 500)
     expect(blend?.history).toHaveLength(blend?.sends ?? -1)
+    expect(manualBlendOf(room, 500, { manualHistory: false })).not.toHaveProperty('history')
+  })
+
+  test('lists every counted send of a flagged user too', () => {
+    const loop = simulateChatterboxLoop({
+      persona: persona(503),
+      template: '关注主播谢谢喵',
+      startAt: T0,
+      durationMs: 2 * MINUTE,
+      randomChar: '\u00AD',
+    })
+    const summaryOf = (options: Partial<DetectorOptions>) => {
+      const detector = new Detector(options)
+      for (const message of mergeStreams(CROWD, loop)) detector.ingest(message)
+      return detector.summaries().find(summary => summary.uid === 503)
+    }
+    expect(summaryOf({ manualHistory: false })).not.toHaveProperty('history')
+    const summary = summaryOf({})
+    expect(summary?.peak.verdict).toBe('spam')
+    expect(summary?.history).toHaveLength(loop.length)
+    expect(summary?.history?.every(send => send.senders === 0)).toBe(true)
+    expect(summary?.history?.map(send => send.at)).toEqual(loop.map(message => message.timestamp))
   })
 })
 

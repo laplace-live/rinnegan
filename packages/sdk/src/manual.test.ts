@@ -141,6 +141,22 @@ describe('ManualBlendIndex', () => {
     const plain = new ManualBlendIndex()
     feed(plain, sends)
     expect(plain.get(ROOM, ME)).not.toHaveProperty('history')
+    expect(plain.history(ROOM, ME)).toBeUndefined()
+  })
+
+  test('keeps the history of an account whose tool rules the mark out', () => {
+    const index = new ManualBlendIndex(true)
+    feed(index, session(15, 10, 10))
+    index.judged(ROOM, ME, `user${ME}`, 0.9)
+    feed(
+      index,
+      session(0, 0, 2).map(([uid, line, at]): Send => [uid, line, at + 3600])
+    )
+    expect(index.get(ROOM, ME)).toBeNull()
+    const history = index.history(ROOM, ME) ?? []
+    expect(history).toHaveLength(37)
+    expect(history.at(-1)).toEqual({ at: T0 + 3_700_000, text: '我自己想说的第1句', senders: 0 })
+    expect(index.history(ROOM, 999)).toEqual([])
   })
 
   test('samples the longest copies, oldest first, with who sent the line before', () => {

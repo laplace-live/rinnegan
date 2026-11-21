@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { ChatMessage, Episode } from '@laplace.live/rinnegan-sdk'
+import type { ChatMessage, Episode, TalliedSend } from '@laplace.live/rinnegan-sdk'
 
 import type { ReportUser } from '@/report/report'
 
@@ -114,22 +114,50 @@ describe('buildActivity', () => {
     expect(period?.ticks.map(tick => tick.label)).toContain('10-21')
   })
 
-  test('bins the gaps between a user’s danmaku and keeps the send tick for guides', () => {
+  test('bins the gaps between a user’s danmaku and finds the narrowest range holding half of them', () => {
     const loop = every(1, at(20, 0), at(20, 0) + 49 * 1300, 1300)
     const messages = mergeStreams(loop, [message(1, at(20, 10))], every(2, at(20, 0), at(20, 1), 10_000))
     const users = [
-      flagged(1, {
-        episodes: [episode(at(20, 0), at(20, 1))],
-        evidence: [{ kind: 'send-tick', weight: 0.9, detail: '节拍', tickMs: 1300 }],
-      }),
+      flagged(1, { episodes: [episode(at(20, 0), at(20, 1))] }),
       flagged(2, { episodes: [episode(at(20, 0), at(20, 1))] }),
     ]
     const { gaps } = buildActivity(messages, users)
     const loopGaps = gaps.get('1:1')
-    expect(loopGaps).toMatchObject({ max: 10, binMs: 200, over: 1, tickMs: 1300 })
+    expect(loopGaps).toMatchObject({ max: 10, binMs: 200, over: 1, half: [1300, 1300] })
     expect(loopGaps?.counts[6]).toBe(49)
     // 7 danmaku leave too few gaps to draw
     expect(gaps.has('1:2')).toBe(false)
+  })
+
+  test('the half range skips the outliers on either side', () => {
+    const steps = [500, 900, 2000, 2100, 2150, 2200, 2300, 9000, 40_000, 60_000]
+    const messages = [message(1, at(20, 0))]
+    for (const step of steps) messages.push(message(1, (messages.at(-1) as ChatMessage).timestamp + step))
+    const users = [flagged(1, { episodes: [episode(at(20, 0), at(20, 1))] })]
+    expect(buildActivity(messages, users).gaps.get('1:1')?.half).toEqual([2000, 2300])
+  })
+
+  test('tags each flagged user’s danmaku with its tally entry, past the danmaku the tally skips', () => {
+    const sent = [
+      message(1, at(20, 0), { text: '晚上好' }),
+      message(1, at(20, 1), { text: '[doge]', isEmote: true }),
+      message(1, at(20, 2), { text: '？' }),
+      message(1, at(20, 3), { text: ' 才八点 ' }),
+      message(1, at(20, 4), { text: '你好', isReply: true }),
+      message(1, at(20, 5), { text: '晚上好' }),
+    ]
+    const history: TalliedSend[] = [
+      // Matches no danmaku, and must not hold up the rest
+      { at: at(19, 59), text: '失配', senders: 0 },
+      { at: at(20, 0), text: '晚上好', senders: 0 },
+      { at: at(20, 3), text: '才八点', senders: 22 },
+      { at: at(20, 5), text: '晚上好', senders: 1, from: 'user2', lagMs: 3000 },
+    ]
+    const users = [flagged(1, { episodes: [episode(at(20, 0), at(20, 5))] })]
+    const tags = buildActivity(sent, users, [], new Map([['1:1', history]])).tallies.get('1:1')
+    expect(sent.map(m => tags?.get(m)?.senders ?? null)).toEqual([0, null, null, 22, null, 1])
+    // No history, no tags
+    expect(buildActivity(sent, users).tallies.size).toBe(0)
   })
 
   test('reads badges as of the peak and streamer names from their own danmaku', () => {

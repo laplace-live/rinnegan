@@ -12,7 +12,7 @@ import type {
 import { type ReplaySend, TrendTape, type TriggerGate, TriggerReplay } from './blend.ts'
 import { CrowdIndex } from './crowd.ts'
 import { LockstepIndex, STEP_MS } from './lockstep.ts'
-import { type ManualBlend, ManualBlendIndex } from './manual.ts'
+import { type ManualBlend, ManualBlendIndex, type TalliedSend } from './manual.ts'
 import {
   canonicalForm,
   codePointLabel,
@@ -52,7 +52,10 @@ export interface DetectorOptions {
   cooldownFloorsMs: number[]
   /** Raw samples kept per cluster for reports */
   samplesPerCluster: number
-  /** Keep every send the 手动融入 tally counts, for `ManualBlend.history`; memory then grows with the session */
+  /**
+   * Keep every send the 手动融入 tally counts, for `ManualBlend.history` and `UserSummary.history`. On by default;
+   * memory grows with the session, so turn it off for long live runs
+   */
   manualHistory: boolean
 }
 
@@ -65,7 +68,7 @@ export const DEFAULT_DETECTOR_OPTIONS: DetectorOptions = {
   tau: 3.3,
   cooldownFloorsMs: [5000],
   samplesPerCluster: 5,
-  manualHistory: false,
+  manualHistory: true,
 }
 
 /** A user flagged at least once, with their worst moment and every flagged stretch. */
@@ -78,6 +81,8 @@ export interface UserSummary {
   lastAt: number
   peak: Assessment
   episodes: Episode[]
+  /** Every text send the 手动融入 tally counted, as a chant, a +1 or a line of their own; absent without `manualHistory` */
+  history?: TalliedSend[]
 }
 
 /** A continuous stretch where a user stayed at `suspect` or above. */
@@ -294,6 +299,7 @@ export class Detector {
     for (const state of this.#users.values()) {
       if (!state.peak || state.peak.verdict === 'none') continue
       const episodes = state.openEpisode ? [...state.episodes, state.openEpisode] : state.episodes
+      const history = this.#manual.history(state.roomId, state.uid)
       out.push({
         roomId: state.roomId,
         uid: state.uid,
@@ -303,6 +309,7 @@ export class Detector {
         lastAt: state.lastAt,
         peak: state.peak,
         episodes: episodes.map(episode => ({ ...episode })),
+        ...(history ? { history } : {}),
       })
     }
     return out.sort((a, b) => b.peak.score - a.peak.score || b.peak.repeats - a.peak.repeats)
@@ -841,16 +848,16 @@ export class Detector {
     const fit = this.#lockstep.fit(state.roomId, state.uid, at - this.options.windowMs)
     if (!fit) return null
     // Evidence text goes to AI review, which never sees a uid.
-    const partner = this.#users.get(`${state.roomId}:${fit.partner}`)?.uname || '另一个账号'
+    const partner = this.#users.get(`${state.roomId}:${fit.partner}`)?.uname
     const others = fit.partners > 1 ? ` 等 ${fit.partners} 个账号` : ''
     const weak = fit.leads && !backed()
     const found = evidence(
       'lockstep',
       weak ? LEADING_LOCKSTEP_WEIGHT : 0.9,
-      `与 ${partner}${others}同步换内容 ${fit.switches} 次（${fit.inStep}/${fit.paired} 次与其相差 ${Math.round(fit.offsetMs)}±${STEP_MS}ms）${weak ? '，但总是先发，也可能是被人跟着发' : ''}`
+      `与 ${partner || '另一个账号'}${others}同步换内容 ${fit.switches} 次（${fit.inStep}/${fit.paired} 次与其相差 ${Math.round(fit.offsetMs)}±${STEP_MS}ms）${weak ? '，但总是先发，也可能是被人跟着发' : ''}`
     )
     const members = new Set(evaluations.filter(evaluation => fit.keys.has(evaluation.summary.key)))
-    return candidate(found, fit.switches, members, {
+    return candidate(partner ? { ...found, names: [partner] } : found, fit.switches, members, {
       pattern: 'blend',
       supporting: true,
       decisive: !weak,

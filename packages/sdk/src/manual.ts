@@ -89,7 +89,10 @@ export class ManualBlendIndex {
   readonly #habits = new Map<string, Habit>()
   readonly #keepHistory: boolean
 
-  /** `keepHistory`: also keep every counted send, for {@link ManualBlend.history}; memory then grows with the session. */
+  /**
+   * `keepHistory`: also keep every counted send, for {@link ManualBlend.history} and {@link ManualBlendIndex.history};
+   * memory then grows with the session.
+   */
   constructor(keepHistory = false) {
     this.#keepHistory = keepHistory
   }
@@ -129,16 +132,19 @@ export class ManualBlendIndex {
   /** Note an assessment's automation proof: signs of a tool rule the mark out for the session. */
   judged(roomId: number, uid: number, uname: string, proof: number): void {
     if (proof < TOOL_PROOF) return
-    const habit = this.#habit(roomId, uid, uname)
-    habit.tool = true
-    // Nothing reads the history of a habit that can never earn the mark
-    habit.history = null
+    this.#habit(roomId, uid, uname).tool = true
   }
 
   /** The user's copying when it earns the mark, else null. */
   get(roomId: number, uid: number): ManualBlend | null {
     const habit = this.#habits.get(`${roomId}:${uid}`)
     return habit && earns(habit) ? summarize(habit) : null
+  }
+
+  /** Every send the tally counted for the user, mark or not; only from an index that keeps them. */
+  history(roomId: number, uid: number): TalliedSend[] | undefined {
+    if (!this.#keepHistory) return undefined
+    return this.#habits.get(`${roomId}:${uid}`)?.history?.map(send => ({ ...send })) ?? []
   }
 
   /** Everyone earning the mark, most copies first. */

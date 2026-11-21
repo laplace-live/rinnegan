@@ -216,12 +216,12 @@ machine's time zone; `--timezone` (`RINNEGAN_TIMEZONE`, `timeZone` in the config
 
 The HTML report is a single self-contained file: styles, charts, and data are inline and nothing loads from the
 network, so it opens offline in any modern browser and can be shared as is. Next to each flagged user's evidence and
-samples, it charts when they were active against the whole room's traffic and how far apart their sends were, with
-the send tick Rinnegan fitted. Viewers marked 手动融入 follow, each with a bar splitting their text danmaku into chants,
-+1s and lines of their own. A click opens each line's samples, every danmaku a flagged user sent, or every text
-danmaku the 手动融入 tally counted for a viewer (stickers, @-replies and lone one- or two-character reactions aside),
-each marked as a chant, a +1 (whose line, how late) or their own. It names archives by file name only, never by their
-local path.
+samples, it charts when they were active against the whole room's traffic and, in plain words, how long they waited
+between danmaku. Viewers marked 手动融入 follow, each with a bar splitting their text danmaku into chants, +1s and lines
+of their own. A click opens each line's samples, every danmaku a flagged user sent, or every text danmaku the 手动融入
+tally counted for a viewer, each marked as a chant, a +1 (whose line, how late) or their own; stickers, @-replies and
+lone short reactions such as 「？」 are marked as such. The 打码 switch in the corner blurs every viewer's name and UID
+for screenshots; the file itself still holds them. It names archives by file name only, never by their local path.
 
 ## Configuration
 
