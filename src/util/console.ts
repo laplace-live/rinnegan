@@ -48,10 +48,27 @@ export function clock(ms: number): string {
   return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`
 }
 
+/** `HH:MM` in the configured time zone. */
+export function hourMinute(ms: number): string {
+  const date = wallClock(ms)
+  return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`
+}
+
 /** `YYYY-MM-DD` in the configured time zone. */
 export function localDate(ms: number): string {
   const date = wallClock(ms)
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`
+}
+
+/** `MM-DD` in the configured time zone. */
+export function monthDay(ms: number): string {
+  const date = wallClock(ms)
+  return `${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`
+}
+
+/** Whether both times fall in one year in the configured time zone. */
+export function sameYear(a: number, b: number): boolean {
+  return wallClock(a).getUTCFullYear() === wallClock(b).getUTCFullYear()
 }
 
 /** `YYYY-MM-DD HH:MM:SS` in the configured time zone. */

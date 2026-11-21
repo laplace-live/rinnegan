@@ -37,7 +37,10 @@ function loop(persona: Persona, template: string): ChatMessage[] {
 }
 
 function chartData(html: string): {
-  periods: { lanes: { name: string; href: string }[] }[]
+  periods: {
+    span: number
+    lanes: { name: string; href: string; sends: number[]; flagged: [number, number, string][] }[]
+  }[]
   gaps: Record<string, { tick: number | null }>
 } {
   const json = html.match(/<script type="application\/json" id="report-data">(.*?)<\/script>/s)?.[1]
@@ -56,7 +59,14 @@ describe('renderHtml', () => {
 
     const data = chartData(html)
     expect(data.periods).toHaveLength(1)
-    expect(data.periods[0]?.lanes[0]).toMatchObject({ name: 'loop-bot', href: '#u-1-4242' })
+    const period = data.periods[0]
+    const lane = period?.lanes[0]
+    expect(lane).toMatchObject({ name: 'loop-bot', href: '#u-1-4242' })
+    // Whole seconds into the period
+    const inPeriod = (s: number) => Number.isInteger(s) && s >= 0 && s <= Math.round(period?.span ?? 0)
+    expect(lane?.sends.length).toBeGreaterThan(2)
+    expect(lane?.sends.every(inPeriod)).toBe(true)
+    expect(lane?.flagged.every(([from, to]) => inPeriod(from) && inPeriod(to))).toBe(true)
     expect(data.gaps['1:4242']?.tick).toBeGreaterThan(1)
   })
 

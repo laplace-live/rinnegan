@@ -56,8 +56,9 @@ function play(room: Line[], uid = BOT): TriggerReplay {
     tape.add(added)
     if (line.uid !== uid) continue
     const send: ReplaySend = { at: line.at, text: line.text, key: added.key }
-    if (replay) replay.observe(tape, send)
-    else if (tape.followsCrowd(send, uid)) replay = new TriggerReplay(uid, send)
+    const follows = tape.followsCrowd(send, uid)
+    if (replay) replay.observe(tape, send, follows)
+    else if (follows) replay = new TriggerReplay(uid, send)
   }
   if (!replay) throw new Error('no send followed the crowd')
   return replay

@@ -28,6 +28,9 @@ export const EVIDENCE_LABELS: Record<EvidenceKind, string> = {
   volume: '刷屏量',
 }
 
+/** By `ChatMessage.userType` */
+export const USER_TYPE_LABELS: Record<number, string> = { 100: '主播', 1: '房管' }
+
 /** By `ChatMessage.guardType` */
 export const GUARD_LABELS: Record<number, string> = { 1: '总督', 2: '提督', 3: '舰长' }
 

@@ -68,7 +68,7 @@ describe('offline report', () => {
       ownSwitches: 31,
       plusOneLagMs: 5800,
       samples: [
-        { at, text: '才八点', senders: 22, from: 'crowd', lagMs: 280 },
+        { at, text: '才八点', senders: 22 },
         { at: at + 60_000, text: '你太云了，没玩过没发言权', senders: 1, from: '路人', lagMs: 5600 },
       ],
     }

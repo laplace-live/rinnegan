@@ -2,7 +2,6 @@ import type { DetectorOptions, Episode, UserSummary } from '@/detect/detector'
 import type { CopySample, ManualBlend } from '@/detect/manual'
 import type { ClusterSummary, Evidence, Pattern, Verdict } from '@/types'
 
-import { CHANT_USERS } from '@/detect/manual'
 import { clip, escapeInvisible } from '@/detect/normalize'
 import { EVIDENCE_LABELS, PATTERN_LABELS, VERDICT_LABELS } from '@/report/labels'
 import { clock, count, dateTime, style, utcOffsets } from '@/util/console'
@@ -58,6 +57,20 @@ export interface OfflineReport {
   manualBlends: ManualBlend[]
 }
 
+/** A user in one room, as `room:uid`. */
+export function userKey(user: { roomId: number; uid: number }): string {
+  return `${user.roomId}:${user.uid}`
+}
+
+export function nameOf(user: { uname: string }): string {
+  return user.uname || '(无名)'
+}
+
+/** e.g. `窗口内重复 12 次` */
+export function repeatsText(user: ReportUser): string {
+  return `${user.triggerHits ? '跟风命中' : '窗口内重复'} ${user.repeats} 次`
+}
+
 export function buildReport(options: {
   archive: ArchiveInfo
   detector: DetectorOptions
@@ -67,7 +80,7 @@ export function buildReport(options: {
   version: string
 }): OfflineReport {
   const manualBlends = options.manualBlends ?? []
-  const marked = new Set(manualBlends.map(blend => `${blend.roomId}:${blend.uid}`))
+  const marked = new Set(manualBlends.map(userKey))
   const users = options.summaries.map(
     (summary, index): ReportUser => ({
       rank: index + 1,
@@ -88,7 +101,7 @@ export function buildReport(options: {
       clusters: summary.peak.clusters,
       episodes: summary.episodes,
       exempt: options.exemption?.(summary) ?? null,
-      manualBlend: marked.has(`${summary.roomId}:${summary.uid}`),
+      manualBlend: marked.has(userKey(summary)),
     })
   )
   return {
@@ -160,10 +173,10 @@ export function renderConsole(
     for (const user of users.slice(0, options.top)) {
       lines.push('')
       lines.push(
-        `#${user.rank} ${verdictBadge(user.verdict, user.score)}  ${style.bold(user.uname || '(无名)')} ${style.gray(`uid ${user.uid} · 房间 ${user.roomId}`)}${user.exempt ? style.cyan(` · 豁免：${user.exempt}`) : ''}${user.manualBlend ? style.cyan(' · 手动融入') : ''}`
+        `#${user.rank} ${verdictBadge(user.verdict, user.score)}  ${style.bold(nameOf(user))} ${style.gray(`uid ${user.uid} · 房间 ${user.roomId}`)}${user.exempt ? style.cyan(` · 豁免：${user.exempt}`) : ''}${user.manualBlend ? style.cyan(' · 手动融入') : ''}`
       )
       lines.push(
-        `   ${PATTERN_LABELS[user.pattern]} · ${user.triggerHits ? '跟风命中' : '窗口内重复'} ${user.repeats} 次 · 自动化 ${user.automation.toFixed(2)} · 共 ${count(user.messages)} 条 · ${user.episodes.length} 段 · 峰值 ${dateTime(user.peakAt)}`
+        `   ${PATTERN_LABELS[user.pattern]} · ${repeatsText(user)} · 自动化 ${user.automation.toFixed(2)} · 共 ${count(user.messages)} 条 · ${user.episodes.length} 段 · 峰值 ${dateTime(user.peakAt)}`
       )
       for (const item of user.evidence) {
         lines.push(
@@ -191,7 +204,7 @@ export function renderConsole(
     )
     for (const blend of blends.slice(0, options.top)) {
       lines.push('')
-      lines.push(`${style.bold(blend.uname || '(无名)')} ${style.gray(`uid ${blend.uid} · 房间 ${blend.roomId}`)}`)
+      lines.push(`${style.bold(nameOf(blend))} ${style.gray(`uid ${blend.uid} · 房间 ${blend.roomId}`)}`)
       lines.push(`   ${describeCopying(blend)}`)
       for (const sample of blend.samples.slice(0, options.samples)) {
         lines.push(style.gray(`      ${clock(sample.at)}  ${copySample(sample)}`))
@@ -214,15 +227,15 @@ function describeCopying(blend: ManualBlend): string {
 }
 
 function plusOneCell(blend: ManualBlend): string {
-  const count = blend.copies - blend.chants
-  return count > 0 ? `${count}（${blend.sources} 人）` : '0'
+  const plusOnes = blend.copies - blend.chants
+  return plusOnes > 0 ? `${plusOnes}（${blend.sources} 人）` : '0'
 }
 
 function copySample(sample: CopySample): string {
   const line = `「${escapeInvisible(clip(sample.text, 40))}」`
-  return sample.senders >= CHANT_USERS
-    ? `${line} 跟 ${sample.senders} 人一起刷`
-    : `${line} 复读 ${sample.from}，晚 ${formatGap(sample.lagMs ?? 0)}`
+  return 'from' in sample
+    ? `${line} 复读 ${sample.from}，晚 ${formatGap(sample.lagMs)}`
+    : `${line} 跟 ${sample.senders} 人一起刷`
 }
 
 function cell(text: string): string {
@@ -232,7 +245,7 @@ function cell(text: string): string {
 /** Markdown rendering with every flagged user, for sharing or archiving. */
 export function renderMarkdown(report: OfflineReport): string {
   const { archive } = report
-  const blends = new Map(report.manualBlends.map(blend => [`${blend.roomId}:${blend.uid}`, blend]))
+  const blends = new Map(report.manualBlends.map(blend => [userKey(blend), blend]))
   const out: string[] = []
   out.push('# LAPLACE Rinnegan 独轮车检测报告', '')
   out.push(`- 生成时间：${dateTime(Date.parse(report.generatedAt))}（${report.tool}）`)
@@ -264,7 +277,7 @@ export function renderMarkdown(report: OfflineReport): string {
       `- 房间 ${user.roomId}，${PATTERN_LABELS[user.pattern]}，峰值 ${dateTime(user.peakAt)}，共 ${user.messages} 条弹幕`
     )
     if (user.exempt) out.push(`- 豁免：${user.exempt}`)
-    const blend = user.manualBlend ? blends.get(`${user.roomId}:${user.uid}`) : undefined
+    const blend = blends.get(userKey(user))
     if (blend) out.push(`- 手动融入：${describeCopying(blend)}`)
     for (const item of user.evidence)
       out.push(`- ${EVIDENCE_LABELS[item.kind]}（${item.weight}）：${cell(item.detail)}`)
@@ -291,7 +304,7 @@ export function renderMarkdown(report: OfflineReport): string {
     report.manualBlends.forEach((blend, index) => {
       const sample = blend.samples.at(-1)
       out.push(
-        `| ${index + 1} | ${cell(blend.uname)} | ${blend.uid} | ${blend.copies}/${blend.sends} | ${blend.chants} | ${plusOneCell(blend)} | ${blend.sends - blend.copies} | ${blend.plusOneLagMs === null ? '—' : formatGap(blend.plusOneLagMs)} | ${sample ? cell(copySample(sample)) : ''} |`
+        `| ${index + 1} | ${cell(blend.uname)} | ${blend.uid} | ${blend.copies}/${blend.sends} | ${blend.chants} | ${plusOneCell(blend)} | ${blend.sends - blend.copies} | ${formatGap(blend.plusOneLagMs ?? 0)} | ${sample ? cell(copySample(sample)) : ''} |`
       )
     })
   }
