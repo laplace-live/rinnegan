@@ -711,11 +711,23 @@ export class Detector {
       automation: Math.round(automation * 1000) / 1000,
       proof: Math.round(proof * 1000) / 1000,
       evidence: found.sort((a, b) => b.weight - a.weight),
-      clusters: shown.slice(0, 3).map(evaluation => evaluation.summary),
+      clusters: this.#shownClusters(state, shown, verdict),
       userType: message.userType,
       guardType: message.guardType,
       medalLevel: message.medalLevel,
     }
+  }
+
+  /** Lines for reports, topped up with the latest single sends, which line-switch evidence can flag on its own. */
+  #shownClusters(state: UserState, shown: ClusterEval[], verdict: Verdict): ClusterSummary[] {
+    const clusters = shown.slice(0, 3).map(evaluation => evaluation.summary)
+    if (verdict === 'none' || clusters.length >= 3) return clusters
+    const singles = [...state.clusters].filter(cluster => cluster.recs.length === 1)
+    singles.sort((a, b) => (b.recs[0] as Rec).at - (a.recs[0] as Rec).at)
+    for (const cluster of singles.slice(0, 3 - clusters.length)) {
+      clusters.push(this.#summarize(state, cluster, measureRhythm([(cluster.recs[0] as Rec).at])))
+    }
+    return clusters
   }
 
   /** Repeated lines whose own gaps sit on `tickMs`: the lines the tool is sending. */
@@ -801,7 +813,8 @@ export class Detector {
   #lockstepWith(state: UserState, evaluations: ClusterEval[], at: number, backed: boolean): Candidate | null {
     const fit = this.#lockstep.fit(state.roomId, state.uid, at - this.options.windowMs)
     if (!fit) return null
-    const partner = this.#users.get(`${state.roomId}:${fit.partner}`)?.uname || `uid ${fit.partner}`
+    // Evidence text goes to AI review, which never sees a uid.
+    const partner = this.#users.get(`${state.roomId}:${fit.partner}`)?.uname || '另一个账号'
     const others = fit.partners > 1 ? ` 等 ${fit.partners} 个账号` : ''
     const weak = fit.leads && !backed
     const found = evidence(

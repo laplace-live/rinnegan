@@ -6,6 +6,11 @@
 
 /** Switches to one line further apart than this never pair */
 const PAIR_MS = 1500
+/**
+ * Switches to one line already within {@link PAIR_MS} past which a new one isn't paired: in a mass chant everyone lands
+ * near everyone, so pairing it would cost O(n²) and prove nothing. The calibration archive's peak was 28.
+ */
+export const CROWDED_SWITCHES = 32
 /** Half-width of the band around a pair's median offset that counts as in step */
 const STEP_MS = 150
 /** A pair offset further than this reacts to different moments, e.g. one account completes the trigger the other answers */
@@ -78,7 +83,7 @@ export class LockstepIndex {
     let drop = 0
     while (drop < recent.length && (recent[drop] as Switch).at < at - PAIR_MS) drop++
     if (drop > 0) recent.splice(0, drop)
-    for (const other of recent) {
+    for (const other of recent.length < CROWDED_SWITCHES ? recent : []) {
       if (other.uid === uid) continue
       const forward = other.uid < uid
       const a = forward ? other.uid : uid

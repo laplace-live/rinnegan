@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { LOCKSTEP_MIN, LockstepIndex } from '@/detect/lockstep'
+import { CROWDED_SWITCHES, LOCKSTEP_MIN, LockstepIndex } from '@/detect/lockstep'
 import { seededRandom } from '@/testing/simulate'
 
 const T0 = Date.parse('2026-11-20T12:00:00Z')
@@ -76,6 +76,17 @@ describe('LockstepIndex', () => {
     expect(index.fit(ROOM, 2, T0 + 6 * 12_000)).toBeNull()
     index.sweep(T0 + 12 * 12_000)
     expect(index.fit(ROOM, 2, T0)).toBeNull()
+  })
+
+  test(`stops pairing a line once ${CROWDED_SWITCHES} switches crowd its pairing window`, () => {
+    const crowd = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [100 + i, () => 100 + i * 20]))
+    const early = new LockstepIndex()
+    feed(early, 12, { ...crowd, 1: () => 0, 2: () => 30 })
+    expect(early.fit(ROOM, 2, T0)?.inStep).toBe(12)
+    // The same pair inside the crush is never paired, however steady.
+    const late = new LockstepIndex()
+    feed(late, 12, { ...crowd, 1: () => 900, 2: () => 930 })
+    expect(late.fit(ROOM, 2, T0)).toBeNull()
   })
 
   test('keeps rooms apart', () => {

@@ -342,6 +342,23 @@ describe('chatterbox 自动融入 is caught', () => {
       expect(peak?.verdict).toBe('spam')
       expect(peak?.pattern).toBe('blend')
       expect(peak?.evidence.map(item => item.detail).join('\n')).toContain('种内容都插入不可见字符')
+      // Each chant is sent once, so the samples come from its latest single sends.
+      expect(peak?.clusters).toHaveLength(3)
+      expect(peak?.clusters[0]?.samples[0]?.text).toContain('\u00AD')
+    })
+
+    test('names a nameless partner without its uid, since evidence goes to AI review', () => {
+      const nameless = simulateAutoBlend(room, {
+        persona: { uid: 414, uname: '', roomId: 1 },
+        latencyMs: [900, 900],
+        jitterMs: 40,
+      })
+      const named = simulateAutoBlend(room, { persona: persona(415), latencyMs: [960, 960], jitterMs: 40 })
+      const detail = judge(mergeStreams(room, nameless, named), 415).peak?.evidence.find(
+        item => item.kind === 'lockstep'
+      )?.detail
+      expect(detail).toContain('与 另一个账号')
+      expect(detail).not.toContain('414')
     })
 
     test('hand-chasers joining the same chants as the swarm stay below spam', () => {
