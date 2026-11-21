@@ -9,7 +9,7 @@ import { EVIDENCE_LABELS, GUARD_LABELS, PATTERN_LABELS, SKIP_LABELS, VERDICT_LAB
 import SCRIPT from '@/report/page/script.js' with { type: 'text' }
 import STYLE from '@/report/page/style.css' with { type: 'text' }
 import { formatGap, formatScore } from '@/report/report'
-import { clock, count, dateTime, localDate, utcOffset } from '@/util/console'
+import { clock, count, dateTime, localDate, utcOffset, utcOffsets } from '@/util/console'
 
 export interface HtmlOptions {
   /** Archive file names for the header; never full paths, which can name the local user */
@@ -185,7 +185,10 @@ function header(ctx: Context): string {
   ]
   if (rooms.length > 0) rows.push(['房间', rooms.join('、')])
   if (archive.messages > 0) {
-    rows.push(['时间', `${dateTime(archive.from)} → ${dateTime(archive.to)}（${utcOffset(archive.from)}）`])
+    rows.push([
+      '时间',
+      `${dateTime(archive.from)} → ${dateTime(archive.to)}（${utcOffsets(archive.from, archive.to)}）`,
+    ])
   }
   rows.push(['弹幕', `${count(archive.messages)} 条，${count(archive.users)} 名用户`])
   if (skipped.length > 0) rows.push(['未计入', escapeHtml(skipped.join(' · '))])
@@ -360,7 +363,7 @@ function notes({ report }: Context): string {
 <h2 id="h-notes">说明</h2>
 <p>分数 0–100，由 ${windowMs / 60_000} 分钟检测窗口内的重复次数与自动化证据（不可见字符、固定节拍、发送节拍、模板轮播、跟风触发等）算出。分数 ≥ ${spamScore} 且自动化证据 ≥ ${minAutomation} 判为独轮车，≥ ${suspectScore} 为可疑；单纯的重复（刷屏量）不算自动化证据。</p>
 <p>每位用户的模式、证据和样本取自其分数最高的时刻；标记时段是分数保持在可疑及以上的连续时间。工具插入的不可见字符显示为 <span class="cp">U+00AD</span> 这样的编号。</p>
-<p>时间为 ${utcOffset(report.archive.messages > 0 ? report.archive.from : generatedAt)}。本报告是单个 HTML 文件，离线也能打开。由 ${link(REPO_URL, escapeHtml(report.tool))} 生成于 ${dateTime(generatedAt)}。</p>
+<p>时间为 ${report.archive.messages > 0 ? utcOffsets(report.archive.from, report.archive.to) : utcOffset(generatedAt)}。本报告是单个 HTML 文件，离线也能打开。由 ${link(REPO_URL, escapeHtml(report.tool))} 生成于 ${dateTime(generatedAt)}。</p>
 </section>`
 }
 

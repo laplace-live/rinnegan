@@ -7,9 +7,9 @@ import type { ChatMessage } from '@/types'
 import { buildActivity } from '@/report/activity'
 import { compareMessages } from '@/sources/archive'
 
-/** Local time on 2026-10-20, so the expectations hold in any time zone. */
+/** China time, which reports use by default, on 2026-10-20, so the expectations hold on any machine. */
 function at(hour: number, minute: number, second = 0): number {
-  return new Date(2026, 9, 20, hour, minute, second).getTime()
+  return Date.UTC(2026, 9, 20, hour - 8, minute, second)
 }
 
 let seq = 0

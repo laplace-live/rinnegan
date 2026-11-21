@@ -202,7 +202,9 @@ Accepts gzip- and zstd-compressed `.lca` archives as well as raw JSON exports (p
 re-exported from a current build of LAPLACE Chat). Prints detected spammers followed by suspects—with evidence and
 message samples (rendering invisible characters like `⟨U+00AD⟩`)—then viewers marked 手动融入 with what they copied and
 from whom, and writes JSON, Markdown, and HTML reports to `reports/` (`--no-report` to skip; `--spam-only` prints
-spammers alone). Timestamps use local time; set `TZ=Asia/Shanghai` for China Standard Time.
+spammers alone). `--since` / `--until` are read, and all times shown, in China Standard Time (UTC+8) whatever the
+machine's time zone; `--timezone` (`RINNEGAN_TIMEZONE`, `timeZone` in the config) takes an IANA name such as
+`America/Los_Angeles` or an offset such as `UTC-8` instead.
 
 The HTML report is a single self-contained file: styles, charts, and data are inline and nothing loads from the
 network, so it opens offline in any modern browser and can be shared as is. Next to each flagged user's evidence and
@@ -220,6 +222,7 @@ Precedence: defaults < `rinnegan.config.json` (or `--config`) < environment vari
 | `RINNEGAN_LOGIN_FILE`                                                                                                                                       | Saved QR code login             |
 | `RINNEGAN_EVENT_URL`, `RINNEGAN_EVENT_TOKEN`, `RINNEGAN_ROOMS`                                                                                              | Event source                    |
 | `RINNEGAN_STORE_URL`, `RINNEGAN_LOG_DIR`, `RINNEGAN_REPORT_DIR`                                                                                             | Persistence                     |
+| `RINNEGAN_TIMEZONE`                                                                                                                                         | Time zone (default UTC+8)       |
 | `RINNEGAN_AI_MODE`, `RINNEGAN_AI_PROVIDER`, `RINNEGAN_AI_PROTOCOL`, `RINNEGAN_AI_BASE`, `RINNEGAN_AI_API_KEY`, `RINNEGAN_AI_MODEL`, `RINNEGAN_AI_THRESHOLD` | AI review                       |
 
 ## Audit log

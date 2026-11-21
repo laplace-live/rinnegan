@@ -2,7 +2,7 @@ import type { ReportUser } from '@/report/report'
 import type { ChatMessage, Verdict } from '@/types'
 
 import { median } from '@/detect/timing'
-import { clock, localDate } from '@/util/console'
+import { afterMidnight, clock, localDate } from '@/util/console'
 
 /** Context shown around each flagged stretch on a timeline */
 export const TIMELINE_CONTEXT_MS = 30 * 60_000
@@ -177,14 +177,12 @@ function periodsOf(
   })
 }
 
-/** Ticks every few minutes or hours on local-time boundaries; midnight is labelled with its date. */
+/** Ticks every few minutes or hours on the configured time zone's boundaries; midnight is labelled with its date. */
 function ticksOf(from: number, to: number): { at: number; label: string }[] {
   const minutes = TICK_MINUTES.find(m => (to - from) / (m * 60_000) <= MAX_TICKS) ?? 1440
-  const day = new Date(from)
   const ticks: { at: number; label: string }[] = []
   for (let i = 0; ; i++) {
-    // The Date constructor rolls minutes over into hours and days, honouring DST.
-    const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, i * minutes).getTime()
+    const at = afterMidnight(from, i * minutes)
     if (at > to) break
     if (at < from) continue
     const time = clock(at).slice(0, 5)

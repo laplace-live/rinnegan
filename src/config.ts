@@ -6,6 +6,7 @@ import { DECISION_DEFAULTS } from '@/ai/decision'
 import { DEFAULT_AI_CONFIG } from '@/ai/reviewer'
 import { PATTERN_LABELS } from '@/report/labels'
 import { errorMessage } from '@/util/guards'
+import { DEFAULT_TIME_ZONE, zoneOffset } from '@/util/time'
 
 /**
  * How AI review takes part in bans.
@@ -62,6 +63,8 @@ export interface LoginSyncConfig {
 export interface RinneganConfig {
   logDir: string
   reportDir: string
+  /** IANA name or UTC offset that `--since` / `--until` are read in and times are shown in */
+  timeZone: string
   detector: Partial<DetectorOptions>
   live: LiveConfig
   loginSync: LoginSyncConfig
@@ -79,6 +82,7 @@ export interface RinneganConfig {
 export const DEFAULT_CONFIG: RinneganConfig = {
   logDir: 'logs',
   reportDir: 'reports',
+  timeZone: DEFAULT_TIME_ZONE,
   detector: {},
   live: {
     url: 'ws://localhost:9696',
@@ -114,6 +118,7 @@ export const DEFAULT_CONFIG: RinneganConfig = {
 export type ConfigLayer = {
   logDir?: string
   reportDir?: string
+  timeZone?: string
   detector?: Partial<DetectorOptions>
   live?: Partial<LiveConfig>
   loginSync?: Partial<LoginSyncConfig>
@@ -178,6 +183,7 @@ export function configFromEnv(env: Record<string, string | undefined> = process.
   const layer: ConfigLayer = {
     logDir: get('RINNEGAN_LOG_DIR'),
     reportDir: get('RINNEGAN_REPORT_DIR'),
+    timeZone: get('RINNEGAN_TIMEZONE'),
     storeUrl: get('RINNEGAN_STORE_URL'),
     loginFile: get('RINNEGAN_LOGIN_FILE'),
     live: defined({
@@ -228,6 +234,7 @@ export function mergeConfig(base: RinneganConfig, ...layers: ConfigLayer[]): Rin
   for (const layer of layers) {
     if (layer.logDir !== undefined) out.logDir = layer.logDir
     if (layer.reportDir !== undefined) out.reportDir = layer.reportDir
+    if (layer.timeZone !== undefined) out.timeZone = layer.timeZone
     if (layer.storeUrl !== undefined) out.storeUrl = layer.storeUrl
     if (layer.loginFile !== undefined) out.loginFile = layer.loginFile
     if (layer.unbanSpendCny !== undefined) out.unbanSpendCny = layer.unbanSpendCny
@@ -259,4 +266,6 @@ export function validateConfig(config: RinneganConfig): void {
   if (ai.provider?.trim()) pick(ai.provider.trim(), AI_PROVIDERS, 'ai.provider')
   if (ai.protocol?.trim()) pick(ai.protocol.trim(), DECISION_PROTOCOLS, 'ai.protocol')
   if (config.unbanSpendCny < 0) throw new Error('unbanSpendCny 不能为负')
+  if (typeof config.timeZone !== 'string') throw new Error('timeZone 必须是字符串，如 "Asia/Shanghai" 或 "UTC+8"')
+  zoneOffset(config.timeZone) // throws on an unknown zone
 }
