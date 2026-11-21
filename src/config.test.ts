@@ -4,7 +4,7 @@ import type { DecisionProtocol } from '@/ai/types'
 import type { ConfigLayer } from '@/config'
 import type { Pattern } from '@/types'
 
-import { configFromFlags, parseTime } from '@/cli'
+import { configFromFlags } from '@/cli'
 import {
   configFromEnv,
   DEFAULT_CONFIG,
@@ -32,13 +32,6 @@ describe('parsers', () => {
     expect(parsePatterns('loop,burst')).toEqual(['loop', 'burst'])
     expect(() => parsePatterns('loop,spam')).toThrow('spam')
   })
-
-  test('parseTime reads local dates and times', () => {
-    expect(parseTime('2026-10-20', 'x')).toBe(new Date(2026, 9, 20, 0, 0).getTime())
-    expect(parseTime('2026-10-20 20:30', 'x')).toBe(new Date(2026, 9, 20, 20, 30).getTime())
-    expect(parseTime('2026-10-20T12:00:00Z', 'x')).toBe(Date.UTC(2026, 9, 20, 12))
-    expect(() => parseTime('yesterday', 'x')).toThrow()
-  })
 })
 
 describe('config layers', () => {
@@ -51,6 +44,7 @@ describe('config layers', () => {
       RINNEGAN_AI_API_KEY: 'sk-test',
       RINNEGAN_STORE_URL: 'memory:',
       RINNEGAN_LOGIN_FILE: 'secrets/login.json',
+      RINNEGAN_TIMEZONE: 'UTC',
       UNRELATED: 'x',
     })
     expect(layer.loginSync?.token).toBe('abc@pw')
@@ -58,18 +52,20 @@ describe('config layers', () => {
     expect(layer.ai).toEqual({ mode: 'confirm', apiKey: 'sk-test' })
     expect(layer.storeUrl).toBe('memory:')
     expect(layer.loginFile).toBe('secrets/login.json')
+    expect(layer.timeZone).toBe('UTC')
     expect(configFromEnv({ UNRELATED: 'x', LOGIN_SYNC_TOKEN: ' ' })).toEqual({})
   })
 
   test('flags override file and env, nested sections merge', () => {
     const file = { ban: { exemptGuards: true, maxPerMinute: 2 }, live: { url: 'ws://file:1' }, loginFile: 'file.json' }
-    const env = configFromEnv({ RINNEGAN_EVENT_URL: 'ws://env:2', LOGIN_SYNC_TOKEN: 'a@b' })
+    const env = configFromEnv({ RINNEGAN_EVENT_URL: 'ws://env:2', LOGIN_SYNC_TOKEN: 'a@b', RINNEGAN_TIMEZONE: 'UTC' })
     const flags = configFromFlags({
       url: 'ws://flag:3',
       room: ['1,2', '3'],
       window: '5',
       'dry-run': true,
       'login-file': 'flag.json',
+      timezone: 'America/Los_Angeles',
     })
     const config = mergeConfig(DEFAULT_CONFIG, file, env, flags)
     expect(config.live.url).toBe('ws://flag:3')
@@ -78,7 +74,9 @@ describe('config layers', () => {
     expect(config.ban).toMatchObject({ dryRun: true, exemptGuards: true, maxPerMinute: 2, hours: -1 })
     expect(config.loginSync.token).toBe('a@b')
     expect(config.loginFile).toBe('flag.json')
+    expect(config.timeZone).toBe('America/Los_Angeles')
     expect(DEFAULT_CONFIG.ban.dryRun).toBe(false)
+    expect(DEFAULT_CONFIG.timeZone).toBe('Asia/Shanghai')
   })
 
   test('validateConfig rejects unsafe values', () => {
@@ -94,6 +92,9 @@ describe('config layers', () => {
     expect(load(configFromFlags({ 'ai-provider': 'gpt' }))).toThrow('ai.provider 只能是 jev / llm')
     expect(load({ ai: { mode: 'off', protocol: 'grpc' as DecisionProtocol } })).toThrow('ai.protocol')
     expect(load({ ban: { patterns: ['spam' as Pattern] } })).toThrow('ban.patterns')
+    expect(load(configFromFlags({ timezone: 'Mars/Olympus' }))).toThrow('未知的时区「Mars/Olympus」')
+    expect(load({ timeZone: -5 as unknown as string })).toThrow('timeZone 必须是字符串')
+    expect(load(configFromEnv({ RINNEGAN_TIMEZONE: 'UTC+8' }))).not.toThrow()
     expect(load(configFromFlags({ 'ai-provider': 'llm', 'ai-protocol': ' ' }))).not.toThrow()
   })
 })

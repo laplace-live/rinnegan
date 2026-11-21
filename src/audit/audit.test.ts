@@ -10,7 +10,8 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 describe('AuditLog', () => {
   test('appends JSONL entries tagged with session and mode', async () => {
-    const audit = new AuditLog({ dir, mode: 'live', now: () => new Date(2026, 9, 21, 12).getTime() })
+    // Still the 20th in UTC, but files follow China time
+    const audit = new AuditLog({ dir, mode: 'live', now: () => Date.UTC(2026, 9, 20, 16, 30) })
     audit.write('ban', { uid: 1, reason: '独轮车' })
     audit.write('unban', { uid: 1 })
     expect(audit.path).toEndWith('audit-2026-10-21.jsonl')
