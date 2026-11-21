@@ -70,6 +70,14 @@ describe('renderHtml', () => {
     expect(chartData(html).periods[0]?.lanes[0]?.name).toBe(uname)
   })
 
+  test('chips only real invisible chars, counting runs, and leaves look-alike text alone', () => {
+    const persona = { uid: 9, uname: 'bot', roomId: 1 }
+    const template = '关注⟨U+200B⟩主播\u00AD\u00AD喵'
+    const html = render(simulateChatterboxLoop({ persona, template, startAt: T0, durationMs: 2 * 60_000 }))
+    expect(html).toContain('关注⟨U+200B⟩主播<span class="cp">U+00AD ×2</span>喵')
+    expect(html).not.toContain('class="cp">U+200B')
+  })
+
   test('loads nothing from the network and never names local paths', () => {
     const html = render(loop({ uid: 8, uname: 'bot', roomId: 1 }, '千舰之夜'))
     expect(html).not.toMatch(/<link|<script[^>]*\ssrc=|@import|url\(/)

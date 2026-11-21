@@ -20,8 +20,8 @@ export interface HtmlOptions {
 
 const REPO_URL = 'https://github.com/laplace-live/rinnegan'
 const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
-/** A run of one `⟨U+…⟩` marker from {@link escapeInvisible} */
-const MARKER_RUN_RE = /(⟨U\+[0-9A-F]{4,6}⟩)\1*/g
+/** A run of one chip from {@link danmaku} */
+const CHIP_RUN_RE = /(<span class="cp">U\+[0-9A-F]{4,6}<\/span>)\1*/g
 
 /** Times within one line of text, which dates its first time and any later one on a new day. */
 interface LineClock {
@@ -46,11 +46,16 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, char => ESCAPES[char] ?? char)
 }
 
+function chip(label: string): string {
+  return `<span class="cp">${label}</span>`
+}
+
 /** Escaped danmaku with tool-inserted invisible chars as `U+00AD` chips; a run of one char collapses to `×n`. */
 function danmaku(text: string): string {
-  return escapeHtml(escapeInvisible(text)).replace(MARKER_RUN_RE, (run: string, marker: string) => {
-    const times = run.length / marker.length
-    return `<span class="cp">${marker.slice(1, -1)}${times > 1 ? ` ×${times}` : ''}</span>`
+  // Escaped first, so only chips match CHIP_RUN_RE: text that merely reads `⟨U+00AD⟩` stays text.
+  return escapeInvisible(escapeHtml(text), chip).replace(CHIP_RUN_RE, (run: string, one: string) => {
+    const times = run.length / one.length
+    return times > 1 ? one.replace('</span>', ` ×${times}</span>`) : one
   })
 }
 
@@ -211,12 +216,12 @@ function tiles({ report }: Context): string {
   const spam = report.users.filter(user => user.verdict === 'spam')
   const suspects = report.users.filter(user => user.verdict === 'suspect')
   const exempt = spam.filter(user => user.exempt).length
-  const banned = exempt > 0 ? `实时模式会封禁 ${spam.length - exempt} 人，豁免 ${exempt} 人` : '实时模式会封禁'
+  const banned = exempt > 0 ? `实时模式默认封禁 ${spam.length - exempt} 人，豁免 ${exempt} 人` : '实时模式默认封禁'
   // `archive.users` counts uids across rooms
   const unflagged = report.archive.users - new Set(report.users.map(user => user.uid)).size
   return `<section class="tiles" aria-label="检测结果">
 ${tile('spam', spam.length, '独轮车', banned, patternMix(spam))}
-${tile('suspect', suspects.length, '可疑', '只报告，不封禁', patternMix(suspects))}
+${tile('suspect', suspects.length, '可疑', '默认只报告，不封禁', patternMix(suspects))}
 ${tile('none', Math.max(0, unflagged), '正常', '未被标记的用户')}
 </section>`
 }
@@ -246,8 +251,8 @@ function group(ctx: Context, verdict: 'spam' | 'suspect'): string {
   const { spamScore, suspectScore, minAutomation } = ctx.report.detector
   const intro =
     verdict === 'spam'
-      ? `分数 ≥ ${spamScore} 且自动化证据 ≥ ${minAutomation}。实时模式会封禁这些用户，豁免者除外。`
-      : `分数 ≥ ${suspectScore}，但自动化证据不足以判为独轮车：只报告，从不封禁。`
+      ? `分数 ≥ ${spamScore} 且自动化证据 ≥ ${minAutomation}。实时模式会封禁这些用户，豁免者除外；AI 复核设为 confirm 时，须 AI 同意才封禁。`
+      : `分数 ≥ ${suspectScore}，但未达到独轮车标准（分数 ≥ ${spamScore} 且自动化证据 ≥ ${minAutomation}）。默认只报告，不封禁；AI 复核设为 assist 时，高分且有部分自动化证据者会交给 AI 复核，AI 同意才封禁。`
   return `<section aria-labelledby="h-${verdict}">
 <h2 id="h-${verdict}">${VERDICT_LABELS[verdict]} · ${users.length} 人</h2>
 <p class="sec-intro">${intro}</p>
