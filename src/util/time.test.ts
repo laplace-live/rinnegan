@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 
-import { afterMidnight, clock, dateTime, fileStamp, localDate, setTimeZone, utcOffset } from '@/util/console'
+import {
+  afterMidnight,
+  clock,
+  dateTime,
+  fileStamp,
+  localDate,
+  setTimeZone,
+  utcOffset,
+  utcOffsets,
+} from '@/util/console'
 import { DEFAULT_TIME_ZONE, parseTime, zoneOffset } from '@/util/time'
 
 const HOUR = 3_600_000
@@ -38,10 +47,19 @@ describe('parseTime', () => {
   test('an explicit Z or offset wins over the zone', () => {
     expect(parseTime('2026-10-20T12:00:00.000Z', 'x', DEFAULT_TIME_ZONE)).toBe(Date.UTC(2026, 9, 20, 12))
     expect(parseTime('2026-10-20T20:00+08:00', 'x', LA)).toBe(Date.UTC(2026, 9, 20, 12))
+    expect(parseTime('2026-10-20T07:00-0500', 'x', DEFAULT_TIME_ZONE)).toBe(Date.UTC(2026, 9, 20, 12))
+  })
+
+  test('resolves clock changes like Date: skipped times land after the gap, repeated ones take the first', () => {
+    expect(parseTime('2026-03-08 02:30', 'x', LA)).toBe(Date.UTC(2026, 2, 8, 10, 30))
+    expect(parseTime('2026-11-01 01:30', 'x', LA)).toBe(Date.UTC(2026, 10, 1, 8, 30))
+    expect(parseTime('2026-03-29 02:30', 'x', 'Europe/Berlin')).toBe(Date.UTC(2026, 2, 29, 1, 30))
+    expect(parseTime('2026-10-25 02:30', 'x', 'Europe/Berlin')).toBe(Date.UTC(2026, 9, 25, 0, 30))
   })
 
   test('rejects anything else', () => {
-    for (const value of ['yesterday', '20:00', 'Oct 20 2026', '2026-10-20 20', '2026-10-20 25:00', '2026-13-01']) {
+    const invalid = ['yesterday', '20:00', 'Oct 20 2026', '2026-10-20 20', '2026-10-20 25:00', '2026-13-01']
+    for (const value of [...invalid, '2026-02-31', '2026-11-31 20:00', '2026-10-20 24:00', '2026-10-20T20:00+15:00']) {
       expect(() => parseTime(value, '--since', 'UTC')).toThrow('--since 不是有效时间')
     }
   })
@@ -65,6 +83,12 @@ describe('formatters', () => {
     setTimeZone('UTC+5:45')
     expect(dateTime(at)).toBe('2026-11-18 17:45:05')
     expect(utcOffset(at)).toBe('UTC+05:45')
+  })
+
+  test('utcOffsets names both ends of a range that crosses a clock change', () => {
+    setTimeZone(LA)
+    expect(utcOffsets(Date.UTC(2026, 9, 31, 12), Date.UTC(2026, 10, 2, 12))).toBe('UTC-07:00 → UTC-08:00')
+    expect(utcOffsets(Date.UTC(2026, 10, 2, 12), Date.UTC(2026, 10, 3, 12))).toBe('UTC-08:00')
   })
 
   test('afterMidnight counts wall-clock minutes from the zone’s midnight', () => {

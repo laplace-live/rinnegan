@@ -266,5 +266,6 @@ export function validateConfig(config: RinneganConfig): void {
   if (ai.provider?.trim()) pick(ai.provider.trim(), AI_PROVIDERS, 'ai.provider')
   if (ai.protocol?.trim()) pick(ai.protocol.trim(), DECISION_PROTOCOLS, 'ai.protocol')
   if (config.unbanSpendCny < 0) throw new Error('unbanSpendCny 不能为负')
-  zoneOffset(String(config.timeZone)) // throws on an unknown zone, or a bare number from a JSON config
+  if (typeof config.timeZone !== 'string') throw new Error('timeZone 必须是字符串，如 "Asia/Shanghai" 或 "UTC+8"')
+  zoneOffset(config.timeZone) // throws on an unknown zone
 }

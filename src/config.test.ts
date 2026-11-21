@@ -93,7 +93,7 @@ describe('config layers', () => {
     expect(load({ ai: { mode: 'off', protocol: 'grpc' as DecisionProtocol } })).toThrow('ai.protocol')
     expect(load({ ban: { patterns: ['spam' as Pattern] } })).toThrow('ban.patterns')
     expect(load(configFromFlags({ timezone: 'Mars/Olympus' }))).toThrow('未知的时区「Mars/Olympus」')
-    expect(load({ timeZone: 8 as unknown as string })).toThrow('未知的时区「8」')
+    expect(load({ timeZone: -5 as unknown as string })).toThrow('timeZone 必须是字符串')
     expect(load(configFromEnv({ RINNEGAN_TIMEZONE: 'UTC+8' }))).not.toThrow()
     expect(load(configFromFlags({ 'ai-provider': 'llm', 'ai-protocol': ' ' }))).not.toThrow()
   })

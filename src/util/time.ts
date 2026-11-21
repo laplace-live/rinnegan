@@ -6,7 +6,9 @@ const OFFSET = /^(?:UTC|GMT)?([+-])(\d{1,2})(?::?(\d{2}))?$/i
 
 /** `2026-10-20`, `2026/10/20 20:00`, `2026-10-20T20:00:30.5`…, optionally ending in `Z` or an offset */
 const TIME =
-  /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:(?:T|\s+)(\d{1,2}):(\d{2})(?::(\d{2}(?:\.\d+)?))?)?(Z|[+-]\d{2}:?\d{2})?$/
+  /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:(?:T|\s+)(\d{1,2}):(\d{2})(?::(\d{2}(?:\.\d+)?))?)?(Z|[+-](?:0\d|1[0-4]):?[0-5]\d)?$/
+
+const DAY_MS = 86_400_000
 
 function unknownZone(zone: string): Error {
   return new Error(`未知的时区「${zone}」，可用 IANA 名称（如 Asia/Shanghai）或 UTC 偏移（如 UTC+8）`)
@@ -52,10 +54,15 @@ export function zoneOffset(zone: string): (ms: number) => number {
   }
 }
 
-/** Unix ms at which a zone's clock reads `wall`, given as the UTC ms of its fields. */
+/**
+ * Unix ms at which a zone's clock reads `wall`, given as the UTC ms of its fields. As with `Date`, a reading that
+ * happens twice when clocks fall back takes the earlier, and one skipped when they spring forward lands after the gap.
+ */
 export function fromWallClock(wall: number, offsetAt: (ms: number) => number): number {
-  // Offset at the instant itself rather than at the wall-clock reading, so DST zones land right
-  return wall - offsetAt(wall - offsetAt(wall))
+  // Offsets a day either side bracket any clock change next to the reading
+  const before = offsetAt(wall - DAY_MS)
+  const readings = [wall - before, wall - offsetAt(wall + DAY_MS)].filter(at => offsetAt(at) === wall - at)
+  return readings.length > 0 ? Math.min(...readings) : wall - before
 }
 
 /** Unix ms of `2026-10-20`, `2026-10-20 20:00` or an ISO time, read in `zone` unless it ends in `Z` or an offset. */
@@ -64,8 +71,11 @@ export function parseTime(value: string, label: string, zone: string): number {
   if (match) {
     const [, year, month = '', day = '', hour = '0', minute = '00', second = '00', designator] = match
     const two = (text: string) => text.padStart(2, '0')
-    const ms = Date.parse(`${year}-${two(month)}-${two(day)}T${two(hour)}:${minute}:${second}${designator ?? 'Z'}`)
-    if (Number.isFinite(ms)) return designator ? ms : fromWallClock(ms, zoneOffset(zone))
+    const wall = Date.parse(`${year}-${two(month)}-${two(day)}T${two(hour)}:${minute}:${second}Z`)
+    // Date.parse rolls 2026-02-31 and 24:00 over into the next day; refuse them instead
+    if (new Date(wall).getUTCDate() === Number(day)) {
+      return fromWallClock(wall, zoneOffset(designator === 'Z' ? 'UTC' : (designator ?? zone)))
+    }
   }
   throw new Error(`${label} 不是有效时间：${value}（格式如 2026-10-20 20:00）`)
 }

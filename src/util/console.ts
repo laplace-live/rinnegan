@@ -72,6 +72,13 @@ export function utcOffset(ms: number): string {
   return `UTC${minutes < 0 ? '-' : '+'}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
 }
 
+/** {@link utcOffset} for a time range, naming both ends when a clock change falls inside it. */
+export function utcOffsets(from: number, to: number): string {
+  const start = utcOffset(from)
+  const end = utcOffset(to)
+  return start === end ? start : `${start} → ${end}`
+}
+
 /** `YYYYMMDD-HHMMSS` in the configured time zone, for file names. */
 export function fileStamp(ms: number): string {
   return dateTime(ms).replace(/[-:]/g, '').replace(' ', '-')
