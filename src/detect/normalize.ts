@@ -94,15 +94,18 @@ export function codePointLabel(char: string): string {
   return `U+${(char.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}`
 }
 
-/** Marks tool-inserted chars as `⟨U+00AD⟩` and escapes line breaks, for console, report and AI-prompt output. */
-export function escapeInvisible(text: string): string {
+/**
+ * Marks tool-inserted chars as `⟨U+00AD⟩` (or `mark(label)`) and escapes line breaks, for console, report and
+ * AI-prompt output.
+ */
+export function escapeInvisible(text: string, mark = (label: string) => `⟨${label}⟩`): string {
   if (!HAS_HIDDEN_RE.test(text)) return text
   const chars = Array.from(text)
   const evasion = evasionIndices(chars)
   return chars
     .map((char, i) => {
       if (WHITESPACE_CONTROLS.has(char)) return JSON.stringify(char).slice(1, -1)
-      return evasion.has(i) ? `⟨${codePointLabel(char)}⟩` : char
+      return evasion.has(i) ? mark(codePointLabel(char)) : char
     })
     .join('')
 }

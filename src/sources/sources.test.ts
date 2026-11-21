@@ -27,6 +27,7 @@ describe('toChatMessage', () => {
       timestamp: 1000,
       guardType: 3,
       medalLevel: 21,
+      medalName: '绿冻',
       isEmote: false,
     })
   })
@@ -51,6 +52,12 @@ describe('toChatMessage', () => {
     expect(toChatMessage(message({ message: '  ' }))).toBe('empty')
     expect(toChatMessage(message({ mock: true }))).toBe('mock')
   })
+
+  test('reads ids as numbers, so a crafted archive cannot slip markup through them', () => {
+    expect(toChatMessage(message({ origin: '<img src=x onerror=alert(1)>' }))).toMatchObject({ roomId: 0, uid: 42 })
+    expect(toChatMessage(message({ uid: '<b>42</b>' }))).toBe('anonymous')
+    expect(toChatMessage(message({ uid: '42' }))).toMatchObject({ uid: 42 })
+  })
 })
 
 describe('toSpendEvent', () => {
@@ -73,6 +80,12 @@ describe('toSpendEvent', () => {
     expect(toSpendEvent({ ...base, type: 'superchat' } as unknown as LaplaceEvent)?.kind).toBe('superchat')
     expect(toSpendEvent({ ...base, type: 'toast' } as unknown as LaplaceEvent)?.kind).toBe('guard')
     expect(toSpendEvent(message())).toBeNull()
+  })
+
+  test('reads ids as numbers', () => {
+    const event = { id: 'g', type: 'superchat', origin: '<b>1</b>', uid: 7, priceNormalized: 30 }
+    expect(toSpendEvent(event as unknown as LaplaceEvent)).toMatchObject({ roomId: 0, uid: 7 })
+    expect(toSpendEvent({ ...event, uid: '<b>7</b>' } as unknown as LaplaceEvent)).toBeNull()
   })
 })
 
