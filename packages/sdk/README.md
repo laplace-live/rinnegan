@@ -32,9 +32,9 @@ function onEvent(event: LaplaceEvent) {
 
 `ingest` returns the sender's assessment after that message. `changed` is set when the verdict rose, or a flagged
 user's score climbed 5 points since the last change, so a UI can update without flicker. One `Detector` handles any
-number of rooms. It keeps each user's messages for a sliding window (`windowMs`, 10 minutes by default), but every
-flagged user's peak and episodes, and each viewer's 手动融入 tally, stay for the whole session: start a new `Detector`
-per stream to release them.
+number of rooms. It keeps each user's messages for a sliding window (`windowMs`, 60 minutes by default), up to their
+last 300 (`maxRecordsPerUser`), but every flagged user's peak and episodes, and each viewer's 手动融入 tally, stay for
+the whole session: start a new `Detector` per stream to release them.
 
 Without `@laplace.live/event-types`, keep `skipLibCheck` on, since the types of `toChatMessage` and `extractMessages`
 refer to it. Danmaku from elsewhere can be passed to `ingest` directly as a `ChatMessage`.

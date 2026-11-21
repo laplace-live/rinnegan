@@ -38,7 +38,7 @@ import {
 export interface DetectorOptions {
   /** Per-user sliding window, ms */
   windowMs: number
-  /** Hard cap on remembered messages per user */
+  /** Hard cap on remembered messages per user; past it, the oldest go before they leave the window */
   maxRecordsPerUser: number
   /** Score at which a user is reported as a suspect */
   suspectScore: number
@@ -55,7 +55,7 @@ export interface DetectorOptions {
 }
 
 export const DEFAULT_DETECTOR_OPTIONS: DetectorOptions = {
-  windowMs: 10 * 60_000,
+  windowMs: 60 * 60_000,
   maxRecordsPerUser: 300,
   suspectScore: 60,
   spamScore: 90,

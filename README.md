@@ -97,27 +97,32 @@ November 2026 stream day), and validated against simulated Chatterbox traffic:
   paraphrase cycling, keyword replacement, Copy Ninja mirrors, and repeat-count burst tools. A random-interval loop
   **without** 随机字符 is only flagged as `suspect`, since clamped Gaussian timing jitter alone is too close to human
   pacing to justify a ban.
-- 自动融入 injected into busy hours of the real archive is caught across every tested configuration: default settings,
-  auto cooldown (with and without avoid-repeat), 4 s cooldown with a 29% random drop rate, 30 s cooldown, a 10-character
-  truncation limit, 2 s resends of truncated long lines, and high jittered latency. In quieter periods where trends
-  rarely overlap, it remains at `suspect`, and random drops cost one hit per skipped trigger. Viewers manually joining
-  the same trends (0.5–6 s reaction time)—even in rooms with only one chant at a time—stay below `spam`, with the most
-  mechanical ones topping out at `suspect`.
-- 0 of 1,000 simulated long human sessions and 0 of 300 mixed-room simulations reached `spam`; +1 copiers, check-in
-  bots, and sticker-panel sweeps all stay below the threshold.
-- On the calibration archive, 55 users are flagged as `spam`: the 41 verified by hand (including 5 trend-following bots
-  caught only by the 自动融入 replay), plus 14 自动融入 accounts the replay had held at `suspect`, caught by 多号同步 (13)
-  or by 随机字符 across copied lines (1) and each confirmed by its timing against the rest of the swarm. Two more swarm
-  accounts stay at `suspect` because they only ever send ahead of their partner. Known edge cases (a fan who
-  copy-pasted a bot's line, heavy +1 users, the streamer, and check-in bots) are left untouched.
+- 自动融入 injected into busy hours of the real archive is caught across every tested configuration but one: default
+  settings, auto cooldown (with and without avoid-repeat), 30 s cooldown, a 10-character truncation limit, 2 s resends
+  of truncated long lines, and high jittered latency. With a 4 s cooldown and a 29% random drop rate, its drops keep its
+  hits under 90% of its line changes over the 60-minute window, so it stays at `suspect`. In quieter periods where
+  trends rarely overlap, it remains at `suspect`, and random drops cost one hit per skipped trigger. Viewers manually
+  joining the same trends (0.5–6 s reaction time)—even in rooms with only one chant at a time—stay below `spam`, with
+  the most mechanical ones topping out at `suspect`.
+- 0 of 1,000 simulated long human sessions and none of 4,000 viewers in 100 simulated chanting rooms reached `spam`;
+  +1 copiers, check-in bots, and sticker-panel sweeps all stay below the threshold. Over the 60-minute window, though,
+  a viewer who keeps repeating a few short lines reaches `suspect` on repetition alone.
+- On the calibration archive, 47 users are flagged as `spam`: 36 of the 41 verified by hand, plus 11 of 14 自动融入
+  accounts the replay had held at `suspect`, caught by 多号同步 (9), 随机字符 across copied lines (1) or 固定节拍 (1)
+  and each confirmed by its timing against the rest of the swarm. The other 8 stay at `suspect`: over an hour, each
+  bot's automated stretch is averaged with its other sends, which pulls its evidence under the share or pace it needs;
+  `--window 10` catches all 55. Two more swarm accounts stay at `suspect` because they only ever send ahead of their
+  partner. Known edge cases (a fan who copy-pasted a bot's line, heavy +1 users, the streamer, and check-in bots) are
+  left untouched.
 - On the November stream day, all 11 users flagged as `spam` were confirmed automated by a review of raw timing and
-  content done without the detector, including 7 accounts of a 自动融入 swarm; an eighth, which only ever sends ahead
-  of its partner, stays at `suspect`. The heavy chatters, check-in routines, and the streamer stay below `spam`. Three
-  自动融入 accounts set to trigger at 10 senders instead of 3 are still missed.
-- 手动融入 marks 9 viewers on the November stream day, including a heavy +1 user checked by hand, and 120 on the
+  content done without the detector, including 6 accounts of a 自动融入 swarm and one of three accounts set to trigger
+  at 10 senders instead of 3, which keeps step with another account over the hour; the other two are still missed. A
+  seventh swarm account drops to `suspect` over the hour, and an eighth, which only ever sends ahead of its partner,
+  stays there too. The heavy chatters, check-in routines, and the streamer stay below `spam`.
+- 手动融入 marks 9 viewers on the November stream day, including a heavy +1 user checked by hand, and 118 on the
   chant-heavy calibration archive. Neither archive has a marked account that was found automated.
 
-Detection runs at ~50k messages/s.
+Detection runs at ~30k messages/s.
 
 Timing thresholds are derived by bootstrapping real human inter-message gaps (200k resamples) and set above the highest
 false-positive match.
