@@ -1,5 +1,12 @@
 # @laplace.live/rinnegan-sdk
 
+## 0.2.0
+
+### Minor Changes
+
+- 60bf71e: List the other viewers' names each evidence detail quotes
+- 60bf71e: Keep every danmaku the 手动融入 tally counts by default, for flagged users too
+
 ## 0.1.0
 
 ### Minor Changes
