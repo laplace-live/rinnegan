@@ -2,6 +2,8 @@ import type { Assessment, ChatMessage, ClusterSummary, Evidence, EvidenceKind, P
 
 import { type ReplaySend, TrendTape, type TriggerGate, TriggerReplay } from '@/detect/blend'
 import { CrowdIndex } from '@/detect/crowd'
+import { LockstepIndex } from '@/detect/lockstep'
+import { type ManualBlend, ManualBlendIndex } from '@/detect/manual'
 import {
   canonicalForm,
   codePointLabel,
@@ -150,6 +152,8 @@ interface UserState {
   fingerprintAge: number
   /** 自动融入 replay, started at the user's first send of a line others were sending */
   replay: TriggerReplay | null
+  /** Key of the last countable send, to tell a line switch from a resend */
+  lastLine: string | null
 }
 
 const VERDICT_RANK: Record<Verdict, number> = { none: 0, suspect: 1, spam: 2 }
@@ -166,6 +170,9 @@ const RECENT_TICK_GAPS = 150
 const TRIGGER_GATE: TriggerGate = { hits: 12, share: 0.9, ruledOut: 3, contested: 3 }
 /** Partial 自动融入 evidence, too weak to ban alone */
 const TRIGGER_PARTIAL_GATE: TriggerGate = { hits: 8, share: 0.6, ruledOut: 3, contested: 0 }
+/** 自动融入 with 随机字符 moves on after a send or two, so its jitter shows across lines, not within one */
+const JITTERED_SENDS = 6
+const JITTERED_LINES = 5
 
 /** Noisy-OR: independent signals reinforce each other without exceeding 1. */
 function combine(weights: number[]): number {
@@ -212,6 +219,8 @@ export class Detector {
   readonly #users = new Map<string, UserState>()
   readonly #crowd: CrowdIndex
   readonly #tapes = new Map<number, TrendTape>()
+  readonly #lockstep = new LockstepIndex()
+  readonly #manual = new ManualBlendIndex()
   #lastSweep = 0
 
   constructor(options: Partial<DetectorOptions> = {}) {
@@ -239,6 +248,7 @@ export class Detector {
     this.#replay(state, message, rec)
 
     const assessment = this.#assess(state, message, at)
+    this.#manual.judged(state.roomId, state.uid, state.uname, assessment.proof)
     const changed = this.#track(state, assessment)
     if (at - this.#lastSweep > this.options.windowMs) this.#sweep(at)
     return { assessment, changed }
@@ -262,6 +272,16 @@ export class Detector {
       })
     }
     return out.sort((a, b) => b.peak.score - a.peak.score || b.peak.repeats - a.peak.repeats)
+  }
+
+  /** Users who mostly copy what others just sent, by hand (手动融入), most copies first. Never banned or exempted. */
+  manualBlends(): ManualBlend[] {
+    return this.#manual.all()
+  }
+
+  /** The user's copying when it earns the 手动融入 mark, else null. */
+  manualBlend(roomId: number, uid: number): ManualBlend | null {
+    return this.#manual.get(roomId, uid)
   }
 
   /** Users currently tracked (for status output). */
@@ -298,13 +318,14 @@ export class Detector {
         fingerprint: null,
         fingerprintAge: 0,
         replay: null,
+        lastLine: null,
       }
       this.#users.set(id, state)
     }
     return state
   }
 
-  /** Put the message on its room's tape and judge it against the sender's 自动融入 replay. */
+  /** Put the message on its room's tape, judge it against the sender's 自动融入 replay and tally it for 手动融入. */
   #replay(state: UserState, message: ChatMessage, rec: Rec): void {
     let tape = this.#tapes.get(state.roomId)
     if (!tape) {
@@ -315,7 +336,13 @@ export class Detector {
     const countable = text.length > 0 && !message.isEmote && !message.isReply
     tape.add({ at: rec.at, uid: state.uid, text, key: rec.key, countable })
     if (!countable) return
+    this.#manual.observe(state.roomId, state.uid, state.uname, rec.key, text, rec.at)
     const send: ReplaySend = { at: rec.at, text, key: rec.key }
+    // 自动融入 only ever switches to a line others are sending; pair such switches across accounts.
+    if (rec.key !== state.lastLine && tape.followsCrowd(send, state.uid)) {
+      this.#lockstep.observe(state.roomId, state.uid, rec.key, rec.at)
+    }
+    state.lastLine = rec.key
     if (state.replay) state.replay.observe(tape, send)
     else if (tape.followsCrowd(send, state.uid)) state.replay = new TriggerReplay(state.uid, send)
   }
@@ -450,6 +477,7 @@ export class Detector {
       this.#users.delete(id)
     }
     for (const [roomId, tape] of this.#tapes) if (now - tape.lastAt > this.options.windowMs) this.#tapes.delete(roomId)
+    this.#lockstep.sweep(now - this.options.windowMs)
   }
 
   #isAtFloor(beatMs: number): boolean {
@@ -621,12 +649,20 @@ export class Detector {
     const tick = this.#sendTick(evaluations) ?? this.#fingerprintTick(state, evaluations)
     // A blend bot may never repeat a line inside the window, so its replay competes even without a repeated line.
     const trigger = this.#trendTrigger(state, evaluations)
-    for (const option of [this.#templateCycle(state, evaluations), tick, trigger]) {
+    const lockstep = this.#lockstepWith(state, evaluations, at)
+    const candidates = [
+      this.#templateCycle(state, evaluations),
+      tick,
+      trigger,
+      this.#jitteredLines(state, evaluations),
+      lockstep,
+    ]
+    for (const option of candidates) {
       if (!option) continue
       const wins = this.#score(option.repeats, option.automation) > this.#score(repeats, automation)
       if (wins) {
         ;({ repeats, automation, members, pattern } = option)
-        triggerHits = option === trigger
+        triggerHits = option === trigger || option === lockstep
       }
       if (wins || option.supporting) lead.unshift(option.evidence)
       if (option.decisive) decided = option.pattern
@@ -747,11 +783,51 @@ export class Detector {
     const found = evidence(
       'trend-trigger',
       strong ? 0.9 : 0.6,
-      `${fit.changes} 次换句中 ${fit.hits} 次正是${cooldown}后最先凑满 3 人 3 次的弹幕${fit.avoid ? '（避免重复）' : ''}（${fit.ruledOut} 次冷却中跳过别的热门，${fit.contested} 次同时另有热门），中位延迟 ${seconds(fit.lagMs)}`
+      `换了 ${fit.changes} 次内容，${fit.hits} 次正是${cooldown}后最先凑满 3 人 3 次的弹幕${fit.avoid ? '（避免重复）' : ''}（${fit.ruledOut} 次冷却中跳过别的热门，${fit.contested} 次同时另有热门），中位延迟 ${seconds(fit.lagMs)}`
     )
     const members = new Set(evaluations.filter(evaluation => fit.keys.has(evaluation.summary.key)))
     // Sends timed by the room's trends make a blend bot, whatever timer or template its lines also fit.
     return candidate(found, fit.hits, members, { pattern: 'blend', supporting: true, decisive: strong })
+  }
+
+  /** Line switches in step with other accounts: several 自动融入 instances answering one trigger together. */
+  #lockstepWith(state: UserState, evaluations: ClusterEval[], at: number): Candidate | null {
+    const fit = this.#lockstep.fit(state.roomId, state.uid, at - this.options.windowMs)
+    if (!fit) return null
+    const partner = this.#users.get(`${state.roomId}:${fit.partner}`)?.uname || `uid ${fit.partner}`
+    const others = fit.partners > 1 ? ` 等 ${fit.partners} 个账号` : ''
+    const found = evidence(
+      'lockstep',
+      0.9,
+      `与 ${partner}${others}同步换内容 ${fit.switches} 次（${fit.inStep}/${fit.paired} 次与其相差 ${Math.round(fit.offsetMs)}±150ms）`
+    )
+    const members = new Set(evaluations.filter(evaluation => fit.keys.has(evaluation.summary.key)))
+    return candidate(found, fit.switches, members, { pattern: 'blend', supporting: true, decisive: true })
+  }
+
+  /** Self-made invisible chars on most lines, each sent once or twice: 自动融入 with 随机字符 moving from trend to trend. */
+  #jitteredLines(state: UserState, evaluations: ClusterEval[]): Candidate | null {
+    let text = 0
+    const own: Rec[] = []
+    for (const rec of state.records) {
+      if (rec.isEmote) continue
+      text++
+      if (rec.evasion.length > 0 && !rec.echo) own.push(rec)
+    }
+    const lines = new Set(own.map(rec => rec.cluster.key))
+    if (own.length < JITTERED_SENDS || lines.size < JITTERED_LINES || own.length < 0.8 * text) return null
+    const names = [...new Set(own.flatMap(rec => rec.evasion))].map(codePointLabel)
+    const crowded = own.filter(rec => this.#crowd.others(state.roomId, rec.key, state.uid) >= 2).length
+    const found = evidence(
+      'invisible-jitter',
+      0.9,
+      `${own.length}/${text} 条、${lines.size} 种内容都插入不可见字符 ${names.join(' ')}`
+    )
+    const members = new Set(evaluations.filter(evaluation => lines.has(evaluation.summary.key)))
+    return candidate(found, own.length - 1, members, {
+      pattern: crowded * 2 >= own.length ? 'blend' : 'loop',
+      supporting: true,
+    })
   }
 
   /** Several lines cycled on one timer: chatterbox's multi-line 独轮车 template. */

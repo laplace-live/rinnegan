@@ -308,6 +308,53 @@ describe('chatterbox 自动融入 is caught', () => {
     expect(peak?.evidence.find(item => item.kind === 'trend-trigger')?.weight).toBeGreaterThanOrEqual(0.6)
   })
 
+  describe('one chant at a time, where the replay alone has nothing to decide', () => {
+    const room = chantRoom(40, [20_000, 40_000])
+    /** Three stock bots on steady latencies, as several chatterbox tabs answer one trigger. */
+    const swarm = [410, 411, 412].map((uid, i) =>
+      simulateAutoBlend(room, { persona: persona(uid), latencyMs: [900 + i * 60, 900 + i * 60], jitterMs: 40 })
+    )
+
+    test('a lone bot stays below spam', () => {
+      expect(judge(mergeStreams(room, swarm[0] as ChatMessage[]), 410).peak?.verdict).not.toBe('spam')
+    })
+
+    test('bots switching in step with each other are caught', () => {
+      const all = mergeStreams(room, ...swarm)
+      for (const uid of [410, 411, 412]) {
+        const { peak } = judge(all, uid)
+        expect(peak?.verdict).toBe('spam')
+        expect(peak?.pattern).toBe('blend')
+        expect(peak?.evidence.find(item => item.kind === 'lockstep')?.weight).toBe(0.9)
+      }
+    })
+
+    test('随机字符 on every chant it copies', () => {
+      const bot = simulateAutoBlend(room, { persona: persona(413), randomChar: '\u00AD' })
+      const { peak } = judge(mergeStreams(room, bot), 413)
+      expect(peak?.verdict).toBe('spam')
+      expect(peak?.pattern).toBe('blend')
+      expect(peak?.evidence.map(item => item.detail).join('\n')).toContain('种内容都插入不可见字符')
+    })
+
+    test('hand-chasers joining the same chants as the swarm stay below spam', () => {
+      for (let seed = 1; seed <= 4; seed++) {
+        const human = simulateTrendChaser(room, {
+          persona: persona(209),
+          ...TREND_CHASERS.quick,
+          random: seededRandom(seed),
+        })
+        expect(judge(mergeStreams(room, ...swarm, human), 209).peak?.verdict).not.toBe('spam')
+      }
+    })
+
+    test('+1-ing a jittered bot chant after chant stays below spam', () => {
+      const bot = simulateAutoBlend(room, { persona: persona(413), randomChar: '\u00AD' })
+      const copier = simulatePlusOne(bot, persona(210), 1, seededRandom(5))
+      expect(judge(mergeStreams(room, bot, copier), 210).peak?.verdict).not.toBe('spam')
+    })
+  })
+
   test('volume evidence counts one line, not the replay hits', () => {
     // The drop bot spreads its sends over a dozen lines; none repeats 15 times, however many changes the replay predicts.
     const bot = simulateAutoBlend(CROWD, { persona: persona(401), dropPercent: 29 })
@@ -409,6 +456,33 @@ describe('humans are never judged spam', () => {
   test('+1-ing a busy room every ~6 s', () => {
     const copier = simulatePlusOne(CROWD, persona(207), 25)
     expect(judge(mergeStreams(CROWD, copier), 207).peak?.verdict).not.toBe('spam')
+  })
+})
+
+describe('手动融入 marks viewers who mostly copy the room by hand', () => {
+  function manualBlendOf(messages: ChatMessage[], uid: number) {
+    const detector = new Detector()
+    for (const message of messages) detector.ingest(message)
+    return detector.manualBlend(1, uid)
+  }
+  const ownLines = Array.from({ length: 80 }, (_, i) => `我自己想说的第${i}句`)
+  const chat = (uid: number, sends: number) =>
+    simulateHumanChat({ persona: persona(uid), lines: ownLines, startAt: T0, sends })
+
+  test('a viewer who +1s a busy room and chats in between', () => {
+    const viewer = mergeStreams(simulatePlusOne(CROWD, persona(500), 100), chat(500, 30))
+    const blend = manualBlendOf(mergeStreams(CROWD, viewer), 500)
+    expect(blend?.copies).toBeGreaterThanOrEqual(40)
+    expect(blend?.ownSwitches).toBeGreaterThanOrEqual(20)
+  })
+
+  test('not a 自动融入 bot, even one whose owner chats alongside it', () => {
+    const bot = mergeStreams(simulateAutoBlend(CROWD, { persona: persona(501) }), chat(501, 60))
+    expect(manualBlendOf(mergeStreams(CROWD, bot), 501)).toBeNull()
+  })
+
+  test('not a viewer who mostly writes their own lines', () => {
+    expect(manualBlendOf(mergeStreams(CROWD, chat(502, 40)), 502)).toBeNull()
   })
 })
 

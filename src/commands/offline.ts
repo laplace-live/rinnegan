@@ -64,6 +64,7 @@ export async function runOffline(options: OfflineOptions): Promise<number> {
     },
     detector: detector.options,
     summaries,
+    manualBlends: detector.manualBlends(),
     // As live mode without AI review would judge the peak
     exemption: summary => banEligibility(summary.peak, config.ban, 'off').exempt,
   })
@@ -101,6 +102,7 @@ export async function runOffline(options: OfflineOptions): Promise<number> {
     messages: messages.length,
     spam: report.totals.spam,
     suspect: report.totals.suspect,
+    manualBlend: report.totals.manualBlend,
     reports: written,
     durationMs: Date.now() - startedAt,
   })

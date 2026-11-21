@@ -56,6 +56,7 @@ export type EvidenceKind =
   | 'machine-speed'
   | 'template-cycle'
   | 'trend-trigger'
+  | 'lockstep'
   | 'volume'
 
 export interface Evidence {

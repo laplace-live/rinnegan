@@ -23,5 +23,6 @@ export const EVIDENCE_LABELS: Record<EvidenceKind, string> = {
   'machine-speed': '机器速度',
   'template-cycle': '模板轮播',
   'trend-trigger': '跟风触发',
+  lockstep: '多号同步',
   volume: '刷屏量',
 }
