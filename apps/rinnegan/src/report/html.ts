@@ -52,6 +52,9 @@ interface Context {
   activity: Activity
   options: HtmlOptions
   at: Clock
+  /** Flagged users and 手动融入 viewers by {@link userKey}, for the links between their cards and entries */
+  flaggedByKey: Map<string, ReportUser>
+  manualByKey: Map<string, ManualBlend>
 }
 
 /** The parts of a 手动融入 viewer's text danmaku, by CSS class. */
@@ -135,7 +138,14 @@ function perBucket(bucketMs: number): string {
  * from the network, so it opens from disk in any current browser.
  */
 export function renderHtml(report: OfflineReport, activity: Activity, options: HtmlOptions): string {
-  const ctx: Context = { report, activity, options, at: clockFor(report.archive.from, report.archive.to) }
+  const ctx: Context = {
+    report,
+    activity,
+    options,
+    at: clockFor(report.archive.from, report.archive.to),
+    flaggedByKey: new Map(report.users.map(user => [userKey(user), user])),
+    manualByKey: new Map(report.manualBlends.map(blend => [userKey(blend), blend])),
+  }
   const title = [roomsTitle(ctx), datesTitle(ctx)].filter(Boolean).join(' · ')
   const flagged = report.users.length > 0
   return `<!doctype html>
@@ -314,9 +324,8 @@ function who({ activity }: Context, user: { roomId: number; uid: number; uname: 
 }
 
 /** A flagged user's 手动融入 mark, linking to their entry in that list. */
-function manualNote({ report }: Context, user: ReportUser): string {
-  const key = userKey(user)
-  const blend = report.manualBlends.find(blend => userKey(blend) === key)
+function manualNote({ manualByKey }: Context, user: ReportUser): string {
+  const blend = manualByKey.get(userKey(user))
   if (!blend) return ''
   return `<p class="manual-note"><a href="#${manualId(user)}"><b>手动融入</b></a>${describeCopying(blend)}</p>`
 }
@@ -427,9 +436,8 @@ ${blends.map(blend => manualEntry(ctx, blend)).join('\n')}
 }
 
 function manualEntry(ctx: Context, blend: ManualBlend): string {
-  const { report, at } = ctx
-  const key = userKey(blend)
-  const user = report.users.find(user => userKey(user) === key)
+  const { report, at, flaggedByKey } = ctx
+  const user = flaggedByKey.get(userKey(blend))
   const pill = user
     ? `<a class="pill ${user.verdict}" href="#${cardId(user)}">${VERDICT_LABELS[user.verdict]} ${formatScore(user.score)}</a>`
     : ''

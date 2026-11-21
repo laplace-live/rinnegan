@@ -776,4 +776,10 @@ summary {
   .manual > li {
     break-inside: avoid;
   }
+
+  /* An opened list prints whole */
+  .all > .samples {
+    max-height: none;
+    overflow: visible;
+  }
 }

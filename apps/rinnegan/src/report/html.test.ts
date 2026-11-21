@@ -133,13 +133,18 @@ describe('renderHtml', () => {
   test('opens each line’s samples, and every danmaku a flagged user sent, on click', () => {
     const messages = loop({ uid: 4242, uname: 'loop-bot', roomId: 1 }, '关注主播谢谢喵')
     const last = messages.at(-1) as ChatMessage
+    const hello = { ...last, id: 'hello', text: '晚上好', timestamp: last.timestamp + 500 }
     const sticker = { ...last, id: 'sticker', text: '[明前奶绿_MA]', isEmote: true, timestamp: last.timestamp + 1000 }
-    const page = render([...messages, sticker])
+    const page = render([...messages, hello, sticker])
+    expect(page).not.toMatch(/<details[^>]*\sopen/)
     // Every kept sample, not just the first few the console prints
     const line = page.match(/<details class="line"><summary class="line-k"><b>「.*?<\/details>/s)?.[0] ?? ''
     expect(line.match(/<li>/g)).toHaveLength(DEFAULT_DETECTOR_OPTIONS.samplesPerCluster)
-    expect(page).toContain(`<details class="all"><summary>全部 ${messages.length + 1} 条弹幕</summary>`)
-    expect(page).toContain('[明前奶绿_MA]<span class="via">表情</span>')
+    const all = page.match(/<details class="all">.*?<\/details>/s)?.[0] ?? ''
+    expect(all).toContain(`<summary>全部 ${messages.length + 2} 条弹幕</summary>`)
+    expect(all.match(/<li>/g)).toHaveLength(messages.length + 2)
+    expect(all).toContain('<span>晚上好</span>')
+    expect(all).toContain('[明前奶绿_MA]<span class="via">表情</span>')
   })
 
   test('lists 手动融入 viewers with what they copied, linked both ways to a flagged one', () => {
@@ -169,8 +174,9 @@ describe('renderHtml', () => {
     expect(page).toContain('aria-label="86 条文字弹幕：跟队形 18 条（21%），+1 37 条（43%），自己说的 31 条（36%）"')
     expect(page).toContain('aria-label="86 条文字弹幕：跟队形 55 条（64%），自己说的 31 条（36%）"')
 
-    // Every counted send, tagged; the chanter has no history, so no list
+    // Every counted send, tagged and closed until clicked; the chanter has no history, so no list
     expect(page.match(/<details class="all">/g)).toHaveLength(1)
+    expect(page).not.toMatch(/<details[^>]*\sopen/)
     expect(page).toContain('<summary>全部 3 条文字弹幕</summary>')
     expect(page).toContain('才八点<span class="via"><i class="kind chant"></i>跟 22 人一起刷</span>')
     expect(page).toContain('我自己想说的话<span class="via"><i class="kind own"></i>自己说的</span>')

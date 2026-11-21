@@ -52,7 +52,7 @@ const detector = new Detector()
 for (const message of messages) detector.ingest(message)
 
 const flagged = detector.summaries() // users who reached `suspect`, worst first, with their peak and flagged stretches
-const copiers = detector.manualBlends() // 手动融入: viewers who copy the room by hand, never flagged
+const copiers = detector.manualBlends() // 手动融入: viewers who copy the room by hand; never spam, some reach suspect
 ```
 
 ## Reading an assessment

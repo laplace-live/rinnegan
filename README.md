@@ -219,8 +219,9 @@ network, so it opens offline in any modern browser and can be shared as is. Next
 samples, it charts when they were active against the whole room's traffic and how far apart their sends were, with
 the send tick Rinnegan fitted. Viewers marked 手动融入 follow, each with a bar splitting their text danmaku into chants,
 +1s and lines of their own. A click opens each line's samples, every danmaku a flagged user sent, or every text
-danmaku a 手动融入 viewer sent, each marked as a chant, a +1 (whose line, how late) or their own. It names archives by
-file name only, never by their local path.
+danmaku the 手动融入 tally counted for a viewer (stickers, @-replies and lone one- or two-character reactions aside),
+each marked as a chant, a +1 (whose line, how late) or their own. It names archives by file name only, never by their
+local path.
 
 ## Configuration
 
