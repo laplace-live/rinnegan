@@ -1,5 +1,11 @@
 # @laplace.live/rinnegan
 
+## 0.5.1
+
+### Patch Changes
+
+- 8d1c4e5: Re-release 0.5.0 with no code changes
+
 ## 0.5.0
 
 ### Minor Changes
