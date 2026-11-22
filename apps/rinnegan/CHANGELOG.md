@@ -1,5 +1,11 @@
 # @laplace.live/rinnegan
 
+## 0.5.0
+
+### Minor Changes
+
+- 4705174: Add a danmaku breakdown bar with counts to every card in the HTML report
+
 ## 0.4.0
 
 ### Minor Changes
