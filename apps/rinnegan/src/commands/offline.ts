@@ -49,7 +49,8 @@ export async function runOffline(options: OfflineOptions): Promise<number> {
     { rooms: config.live.rooms, since: options.since, until: options.until, includeMirror: config.live.includeMirror }
   )
 
-  const detector = new Detector(config.detector)
+  // Only the written reports read the 手动融入 history (the HTML's tags, lists and bars), so keep it exactly then
+  const detector = new Detector({ ...config.detector, manualHistory: options.writeFiles })
   for (const message of messages) detector.ingest(message)
   const summaries = detector.summaries()
 

@@ -359,8 +359,10 @@ describe('renderHtml', () => {
     expect(parts).toContain(
       '<i class="other" style="flex-grow:4" data-tip="短句、表情和回复 · 4 条 · 占 44%" data-tip-note="短句 2 条 · 表情 1 条 · 回复 1 条\n单独发的短句（如「？」）、表情和 @ 回复不算复读，也不算自己说的"></i>'
     )
-    // The legend names and counts each part, with its segment's tooltip
-    expect(parts).toContain('<i class="swatch-seg chant"></i>跟队形<b>3</b></span>')
+    // The legend names and counts each part, with its segment's tooltip, which keyboard readers reach by focus
+    expect(parts).toContain(
+      '<span tabindex="0" aria-describedby="tip" data-tip="跟队形 · 3 条 · 占 33%" data-tip-note="复读前一分钟内 3 人以上在刷的内容"><i class="swatch-seg chant"></i>跟队形<b>3</b></span>'
+    )
     expect(parts).toContain(
       '<i class="swatch-seg other"></i><span>短句<b>2</b></span>·<span>表情<b>1</b></span>·<span>回复<b>1</b></span></span>'
     )

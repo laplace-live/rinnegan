@@ -37,6 +37,21 @@ async function cli(...args: string[]): Promise<{ code: number; out: string; err:
   return { code, out, err }
 }
 
+/** A gzip archive in the temp dir holding a one-minute soft-hyphen loop at 20:00 China time on 2026-10-20. */
+async function loopArchive(name: string): Promise<string> {
+  const messages = simulateChatterboxLoop({
+    persona: { uid: 4242, uname: 'loop-bot', roomId: 1 },
+    template: '关注主播谢谢喵',
+    startAt: Date.parse('2026-10-20T12:00:00Z'),
+    durationMs: 60_000,
+    randomChar: '­',
+  })
+  const events = messages.map(message => messageEvent(message))
+  const archive = join(dir, name)
+  await Bun.write(archive, Bun.gzipSync(new TextEncoder().encode(JSON.stringify([{ name: 'main', data: events }]))))
+  return archive
+}
+
 describe('rinnegan CLI', () => {
   test('help and version', async () => {
     const help = await cli('--help')
@@ -75,16 +90,7 @@ describe('rinnegan CLI', () => {
   })
 
   test('offline ranks an injected loop and writes reports', async () => {
-    const messages = simulateChatterboxLoop({
-      persona: { uid: 4242, uname: 'loop-bot', roomId: 1 },
-      template: '关注主播谢谢喵',
-      startAt: Date.parse('2026-10-20T12:00:00Z'),
-      durationMs: 60_000,
-      randomChar: '­',
-    })
-    const events = messages.map(message => messageEvent(message))
-    const archive = join(dir, 'room.lca')
-    await Bun.write(archive, Bun.gzipSync(new TextEncoder().encode(JSON.stringify([{ name: 'main', data: events }]))))
+    const archive = await loopArchive('room.lca')
     const reports = join(dir, 'reports')
     // The loop runs at 20:00 China time (05:00 in Los Angeles), so a Los Angeles --since would drop it
     const result = await cli('offline', archive, '--report-dir', reports, '--since', '2026-10-20 19:59')
@@ -111,5 +117,18 @@ describe('rinnegan CLI', () => {
     const html = await Bun.file(join(reports, files[0] as string)).text()
     expect(html).toContain('loop-bot')
     expect(html).not.toContain(dir)
+  })
+
+  test('offline keeps the 手动融入 history its HTML report draws on, whatever the config says', async () => {
+    const archive = await loopArchive('history.lca')
+    const config = join(dir, 'no-history.json')
+    await Bun.write(config, JSON.stringify({ detector: { manualHistory: false } }))
+    const reports = join(dir, 'history-reports')
+    const result = await cli('offline', archive, '-c', config, '--report-dir', reports)
+    expect(result.code).toBe(0)
+    const page = readdirSync(reports).find(name => name.endsWith('.html')) as string
+    const html = await Bun.file(join(reports, page)).text()
+    // Every send of the loop is a line of its own, which only the tally can tell
+    expect(html).toMatch(/aria-label="(\d+) 条弹幕：自己说的 \1 条（100%）"/)
   })
 })

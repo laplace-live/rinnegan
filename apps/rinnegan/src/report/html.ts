@@ -579,7 +579,8 @@ function partsBar({ counts, sources, lagMs }: DanmakuMix): string {
       item.part === 'other'
         ? leftOut.map(kind => `<span>${LEFT_OUT[kind]}<b>${count(counts[kind])}</b></span>`).join('·')
         : `${item.name}<b>${count(item.n)}</b>`
-    return `<span ${tip(item)}><i class="swatch-seg ${item.part}"></i>${key}</span>`
+    // Focusable, so keyboard readers reach the tooltip too
+    return `<span tabindex="0" aria-describedby="tip" ${tip(item)}><i class="swatch-seg ${item.part}"></i>${key}</span>`
   })
   const label = parts.map(item => `${item.name} ${count(item.n)} 条（${share(item.n)}）`).join('，')
   return `<div class="parts"><div class="parts-bar" role="img" aria-label="${Bun.escapeHTML(`${count(total)} 条弹幕：${label}`)}">${bar}</div><p class="legend parts-key">${legend.join('')}</p></div>`
