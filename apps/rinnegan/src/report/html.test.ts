@@ -43,7 +43,8 @@ function render(messages: ChatMessage[]): string {
     summaries,
     manualBlends: detector.manualBlends(),
   })
-  return renderPage(report, messages, new Map(summaries.map(summary => [userKey(summary), summary.history ?? []])))
+  const listed = [...summaries, ...report.manualBlends]
+  return renderPage(report, messages, new Map(listed.map(user => [userKey(user), user.history ?? []])))
 }
 
 /** A 100-user archive with these 手动融入 viewers and flagged peaks, the flagged users' `messages` and tallies. */
@@ -183,54 +184,69 @@ describe('renderHtml', () => {
     expect(all).toContain(`<summary>全部 ${messages.length + 2} 条弹幕</summary>`)
     expect(all.match(/<li>/g)).toHaveLength(messages.length + 2)
     expect(all).toContain('<span>晚上好<span class="via own">自己说的</span></span>')
-    expect(all).toContain('[明前奶绿_MA]<span class="via">表情</span>')
+    expect(all).toContain('[明前奶绿_MA]<span class="via other">表情</span>')
   })
 
   test('lists 手动融入 viewers with what they copied, linked both ways to a flagged one', () => {
-    const copier = manualBlend({
-      history: [
-        { at: T0, text: '才八点', senders: 22 },
-        { at: T0 + 30_000, text: '我自己想说的话', senders: 0 },
-        { at: T0 + 60_000, text: '你太云了，没玩过没发言权', senders: 1, from: '路人', lagMs: 5600 },
-      ],
-    })
+    const history: TalliedSend[] = [
+      { at: T0, text: '才八点', senders: 22 },
+      { at: T0 + 30_000, text: '我自己想说的话', senders: 0 },
+      { at: T0 + 60_000, text: '你太云了，没玩过没发言权', senders: 1, from: '路人', lagMs: 5600 },
+    ]
+    const sent = [
+      said(0, '才八点'),
+      said(30, '我自己想说的话'),
+      said(45, '[doge]', { isEmote: true }),
+      said(60, '你太云了，没玩过没发言权'),
+    ]
+    const copier = manualBlend()
     const chanter = manualBlend({ uid: 43, uname: 'chanter', chants: 55, sources: 0, plusOneLagMs: null })
-    const page = renderMarked([copier, chanter], [{ verdict: 'suspect', score: 70, evidence: [], proof: 0 }])
+    const page = renderMarked([copier, chanter], [{ verdict: 'suspect', score: 70, evidence: [], proof: 0 }], {
+      messages: sent,
+      histories: new Map([['1:42', history]]),
+    })
     expect(page).toContain('手动融入 · 2 人')
     expect(page).toContain('其中 1 人也被判为可疑')
     // 100 users, less the suspect and the chanter, who are both marked
     expect(page).toContain('<span class="num">98</span><span class="lbl"><i class="dot none"></i>正常')
 
+    // The bar's legend counts each part, so the note and the entry give what earned the mark
     expect(page).toContain(
-      '<p class="manual-note"><a href="#m-1"><b>手动融入</b></a>复读 55/86 条（跟队形 18 条，+1 了 31 人的 37 条，通常比原弹幕晚 5.8s），自己说的 31 条</p>'
+      '<p class="manual-note"><a href="#m-1"><b>手动融入</b></a>也在手动复读别人：86 条文字弹幕中复读了 55 条</p>'
     )
+    expect(page).toContain('<p class="facts">86 条文字弹幕中复读了 55 条</p>')
     expect(page).toContain('<li id="m-1">')
     expect(page).toContain('<a class="pill suspect" href="#u-1">可疑 70.0</a>')
     expect(page).toContain('<li id="m-2">')
     expect(page.match(/class="pill suspect" href=/g)).toHaveLength(1)
 
-    // Every part's count and share; a part at zero draws nothing
-    expect(page).toContain('aria-label="86 条文字弹幕：跟队形 18 条（21%），+1 37 条（43%），自己说的 31 条（36%）"')
-    expect(page).toContain('aria-label="86 条文字弹幕：跟队形 55 条（64%），自己说的 31 条（36%）"')
+    // Every danmaku split into parts, on the flagged card and the 手动融入 entry alike; the chanter has no tally
+    const bar = 'aria-label="4 条弹幕：跟队形 1 条（25%），+1 1 条（25%），自己说的 1 条（25%），表情 1 条（25%）"'
+    expect(page.split(bar)).toHaveLength(3)
+    expect(page.match(/<div class="parts">/g)).toHaveLength(2)
 
-    // Every counted send, tagged and closed until clicked; the chanter has no history, so no list
-    expect(page.match(/<details class="all">/g)).toHaveLength(1)
+    // Every danmaku, tagged and closed until clicked; the chanter sent none here, so no list
+    const entry = page.match(/<li id="m-1">.*?<\/li>\n/s)?.[0] ?? ''
+    expect(entry).toContain('<summary>全部 4 条弹幕</summary>')
     expect(page).not.toMatch(/<details[^>]*\sopen/)
-    expect(page).toContain('<summary>全部 3 条文字弹幕</summary>')
-    expect(page).toContain('才八点<span class="via chant">跟 22 人一起刷</span>')
-    expect(page).toContain('我自己想说的话<span class="via own">自己说的</span>')
-    expect(page).toContain(
+    expect(page.match(/<li id="m-2">.*?<\/li>\n/s)?.[0]).not.toContain('<details')
+    expect(entry).toContain('才八点<span class="via chant">跟 22 人一起刷</span>')
+    expect(entry).toContain('我自己想说的话<span class="via own">自己说的</span>')
+    expect(entry).toContain('[doge]<span class="via other">表情</span>')
+    expect(entry).toContain(
       '你太云了，没玩过没发言权<span class="via plus-one">复读 <span class="pii">路人</span>，晚 5.6s</span>'
     )
   })
 
   test('escapes 手动融入 names and copied lines, and chips their invisible chars', () => {
-    const page = renderMarked([
-      manualBlend({
-        uname: '<img src=x onerror=alert(1)>',
-        history: [{ at: T0, text: '</script>千\u00AD舰', senders: 1, from: '<i>路人</i>', lagMs: 1000 }],
-      }),
-    ])
+    const uname = '<img src=x onerror=alert(1)>'
+    const history: TalliedSend[] = [
+      { at: T0, text: '</script>千\u00AD舰', senders: 1, from: '<i>路人</i>', lagMs: 1000 },
+    ]
+    const page = renderMarked([manualBlend({ uname })], [], {
+      messages: [said(0, '</script>千\u00AD舰', { uname })],
+      histories: new Map([['1:42', history]]),
+    })
     expect(page).not.toContain('<img')
     expect(page).toContain('<h3 class="pii">&lt;img src=x onerror=alert(1)&gt;</h3>')
     expect(page).toContain(
@@ -296,15 +312,67 @@ describe('renderHtml', () => {
     expect(all).toContain('才八点<span class="via chant">跟 22 人一起刷</span>')
     expect(all).toContain('我自己想说的话<span class="via own">自己说的</span>')
     expect(all).toContain('你太云了<span class="via plus-one">复读 <span class="pii">路人</span>，晚 2.1s</span>')
-    expect(all).toContain('？<span class="via">短句</span>')
-    expect(all).toContain('[doge]<span class="via">表情</span>')
-    expect(all).toContain('你好<span class="via">回复</span>')
+    expect(all).toContain('？<span class="via other">短句</span>')
+    expect(all).toContain('[doge]<span class="via other">表情</span>')
+    expect(all).toContain('你好<span class="via other">回复</span>')
 
-    // Without the tally, only stickers and replies are marked
-    const untagged = renderMarked([], [{}], { messages: sent }).match(/<details class="all">.*?<\/details>/s)?.[0]
-    expect(untagged).toContain('<span>？</span>')
-    expect(untagged).toContain('<span>我自己想说的话</span>')
-    expect(untagged).toContain('[doge]<span class="via">表情</span>')
+    // Without the tally, only stickers and replies are marked, and there is no bar
+    const untagged = renderMarked([], [{}], { messages: sent })
+    const list = untagged.match(/<details class="all">.*?<\/details>/s)?.[0]
+    expect(list).toContain('<span>？</span>')
+    expect(list).toContain('<span>我自己想说的话</span>')
+    expect(list).toContain('[doge]<span class="via other">表情</span>')
+    expect(untagged).not.toContain('class="parts"')
+  })
+
+  test('splits a tallied user’s danmaku into parts, counted in a legend and explained on hover', () => {
+    const sent = [
+      said(0, '才八点'),
+      said(10, '才八点'),
+      said(20, '才八点'),
+      said(30, '你太云了'),
+      said(40, '我自己想说的话'),
+      said(50, '？'),
+      said(60, '草'),
+      said(70, '[doge]', { isEmote: true }),
+      said(80, '你好', { isReply: true }),
+    ]
+    const history: TalliedSend[] = [
+      { at: T0, text: '才八点', senders: 22 },
+      { at: T0 + 10_000, text: '才八点', senders: 20 },
+      { at: T0 + 20_000, text: '才八点', senders: 9 },
+      { at: T0 + 30_000, text: '你太云了', senders: 1, from: '路人', lagMs: 2100 },
+      { at: T0 + 40_000, text: '我自己想说的话', senders: 0 },
+    ]
+    const page = renderMarked([], [{}], { messages: sent, histories: new Map([['1:42', history]]) })
+    const parts = page.match(/<div class="parts">.*?<\/p><\/div>/s)?.[0] ?? ''
+    expect(parts).toContain(
+      'aria-label="9 条弹幕：跟队形 3 条（33%），+1 1 条（11%），自己说的 1 条（11%），短句、表情和回复 4 条（44%）"'
+    )
+    expect(parts).toContain(
+      '<i class="chant" style="flex-grow:3" data-tip="跟队形 · 3 条 · 占 33%" data-tip-note="复读前一分钟内 3 人以上在刷的内容"></i>'
+    )
+    // A +1 says whose lines and how late; the gray part, which kinds the tally left out
+    expect(parts).toContain(
+      'data-tip="+1 · 1 条 · 占 11%" data-tip-note="复读一两个人刚发的内容\n来自 1 人，通常比原弹幕晚 2.1s"'
+    )
+    expect(parts).toContain(
+      '<i class="other" style="flex-grow:4" data-tip="短句、表情和回复 · 4 条 · 占 44%" data-tip-note="短句 2 条 · 表情 1 条 · 回复 1 条\n单独发的短句（如「？」）、表情和 @ 回复不算复读，也不算自己说的"></i>'
+    )
+    // The legend names and counts each part, with its segment's tooltip
+    expect(parts).toContain('<i class="swatch-seg chant"></i>跟队形<b>3</b></span>')
+    expect(parts).toContain(
+      '<i class="swatch-seg other"></i><span>短句<b>2</b></span>·<span>表情<b>1</b></span>·<span>回复<b>1</b></span></span>'
+    )
+    expect(parts.split('data-tip="跟队形 · 3 条 · 占 33%"')).toHaveLength(3)
+
+    // A sliver reads <1%; a part at zero draws nothing
+    const chatty = Array.from({ length: 150 }, (_, i) => said(i * 10, `第 ${i} 句`))
+    const own: TalliedSend[] = chatty.map(message => ({ at: message.timestamp, text: message.text, senders: 0 }))
+    const sticker = said(1505, '[doge]', { isEmote: true })
+    const sliver = renderMarked([], [{}], { messages: [...chatty, sticker], histories: new Map([['1:42', own]]) })
+    expect(sliver).toContain('aria-label="151 条弹幕：自己说的 150 条（99%），表情 1 条（&lt;1%）"')
+    expect(sliver).toContain('data-tip="表情 · 1 条 · 占 &lt;1%" data-tip-note="单独发的短句')
   })
 
   test('leaves the 手动融入 list out when nobody earns the mark', () => {

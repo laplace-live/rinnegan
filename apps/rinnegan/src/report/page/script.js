@@ -168,17 +168,20 @@
 
   const tip = document.getElementById('tip')
   if (!tip) return
+  const span = (cls, value) => {
+    const node = document.createElement('span')
+    node.className = cls
+    node.textContent = value
+    return node
+  }
   const show = (target, cx, cy) => {
     tip.textContent = ''
     // A viewer's name goes in its own span, which 打码 blurs
     const name = target.getAttribute('data-tip-name')
-    if (name) {
-      const span = document.createElement('span')
-      span.className = 'pii'
-      span.textContent = name
-      tip.append(span, ' · ')
-    }
+    if (name) tip.append(span('pii', name), ' · ')
     tip.append(target.getAttribute('data-tip') || '')
+    const note = target.getAttribute('data-tip-note')
+    if (note) tip.append(span('note', note))
     tip.hidden = false
     const r = tip.getBoundingClientRect()
     let left = cx + 12

@@ -10,13 +10,13 @@ import {
   VERDICT_LABELS,
 } from '@laplace.live/rinnegan-sdk'
 
-import type { Activity, Badges, GapHistogram, Lane } from '@/report/activity'
+import type { Activity, Badges, CountedKind, DanmakuMix, GapHistogram, Lane, LeftOutKind } from '@/report/activity'
 import type { OfflineReport, ReportUser } from '@/report/report'
 
-import { TIMELINE_CONTEXT_MS } from '@/report/activity'
+import { leftOutKind, sendKind, TIMELINE_CONTEXT_MS } from '@/report/activity'
 import SCRIPT from '@/report/page/script.js' with { type: 'text' }
 import STYLE from '@/report/page/style.css' with { type: 'text' }
-import { copyNote, describeCopying, formatGap, formatScore, nameOf, repeatsText, userKey } from '@/report/report'
+import { copyNote, formatGap, formatScore, nameOf, repeatsText, userKey } from '@/report/report'
 import {
   clock,
   count,
@@ -65,10 +65,25 @@ interface Context {
   manualByKey: Map<string, { blend: ManualBlend; n: number }>
 }
 
-/** The parts of a 手动融入 viewer's text danmaku, by CSS class. */
-const COPY_KINDS = { chant: '跟队形', 'plus-one': '+1', own: '自己说的' } as const
+/** What the 手动融入 tally counts a text danmaku as, by the CSS class that colors it. */
+const COUNTED: Record<CountedKind, string> = { chant: '跟队形', 'plus-one': '+1', own: '自己说的' }
 
-type CopyKind = keyof typeof COPY_KINDS
+/** Danmaku the tally leaves out, which share one gray part of the bar, `other`. */
+const LEFT_OUT: Record<LeftOutKind, string> = { short: '短句', emote: '表情', reply: '回复' }
+
+/** `短句和表情`, `短句、表情和回复` */
+const ZH_LIST = new Intl.ListFormat('zh')
+
+/** A part of a user's danmaku bar; also a danmaku's dot in lists. */
+type Part = CountedKind | 'other'
+
+/** One part of the bar: its name and count, and the lines its tooltip adds about what it holds. */
+interface BarPart {
+  part: Part
+  name: string
+  n: number
+  notes: string[]
+}
 
 const TILE_LABELS = { ...VERDICT_LABELS, manual: '手动融入' }
 
@@ -338,6 +353,7 @@ ${who(ctx, user, `<span class="rank">#${user.rank}</span>`)}
 <span class="pill ${user.verdict}">${VERDICT_LABELS[user.verdict]} ${formatScore(user.score)}</span>
 </div>
 <p class="facts">${facts(ctx, user)}</p>
+${partsOf(ctx, user)}
 ${user.exempt ? `<p class="exempt"><b>豁免</b>实时模式不会封禁：${Bun.escapeHTML(user.exempt)}</p>` : ''}
 ${manualNote(ctx, user)}
 ${evidence(user)}
@@ -357,7 +373,12 @@ function who({ activity }: Context, user: { roomId: number; uid: number; uname: 
 function manualNote({ manualByKey }: Context, user: ReportUser): string {
   const entry = manualByKey.get(userKey(user))
   if (!entry) return ''
-  return `<p class="manual-note"><a href="#${manualId(entry.n)}"><b>手动融入</b></a>${describeCopying(entry.blend)}</p>`
+  return `<p class="manual-note"><a href="#${manualId(entry.n)}"><b>手动融入</b></a>也在手动复读别人：${copied(entry.blend)}</p>`
+}
+
+/** What earned the 手动融入 mark: copies among the text danmaku the tally counted. */
+function copied(blend: ManualBlend): string {
+  return `${count(blend.sends)} 条文字弹幕中复读了 ${count(blend.copies)} 条`
 }
 
 function badges(found: Badges | undefined): string {
@@ -433,9 +454,9 @@ function row(at: Clock, ms: number, text: string, note = ''): string {
   return `<li><time>${at.second(ms)}</time><span>${danmaku(text)}${note}</span></li>`
 }
 
-/** A note after a danmaku, led by a dot in `kind`'s copy bar color when given; `html` is markup. */
-function via(html: string, kind?: CopyKind): string {
-  return `<span class="via${kind ? ` ${kind}` : ''}">${html}</span>`
+/** A note after a danmaku, led by a dot in its part's color; `html` is markup. */
+function via(html: string, part: Part): string {
+  return `<span class="via ${part}">${html}</span>`
 }
 
 /** Rows behind a summary, closed until clicked; nothing without rows. */
@@ -459,18 +480,16 @@ function lines({ at }: Context, user: ReportUser): string {
   return `<div class="lines">${blocks.join('')}</div>`
 }
 
-/** Every danmaku the user sent in the archive, tagged as the 手动融入 list tags them when the tally was kept. */
-function allDanmaku({ activity, at }: Context, user: ReportUser): string {
+/** Every danmaku the user sent in the archive, tagged with its part when the 手动融入 tally was kept. */
+function allDanmaku({ activity, at }: Context, user: { roomId: number; uid: number }): string {
   const sent = activity.danmaku.get(userKey(user)) ?? []
   const tags = activity.tallies.get(userKey(user))
   const rows = sent.map(message => {
     const send = tags?.get(message)
-    let note = ''
-    if (send) note = tally(send)
-    else if (message.isEmote) note = via('表情')
-    else if (message.isReply) note = via('回复')
-    // All the tally skips besides: a lone short reaction such as 「？」
-    else if (tags) note = via('短句')
+    if (send) return row(at, message.timestamp, message.text, tally(send))
+    const kind = leftOutKind(message)
+    // Without the tally, a lone short reaction can't be told from any other line
+    const note = kind === 'short' && !tags ? '' : via(LEFT_OUT[kind], 'other')
     return row(at, message.timestamp, message.text, note)
   })
   return collapsed(`全部 ${count(rows.length)} 条弹幕`, rows)
@@ -479,13 +498,9 @@ function allDanmaku({ activity, at }: Context, user: ReportUser): string {
 function manualBlends(ctx: Context): string {
   const blends = ctx.report.manualBlends
   if (blends.length === 0) return ''
-  const legend = Object.entries(COPY_KINDS).map(
-    ([kind, label]) => `<span><i class="swatch-seg ${kind}"></i>${label}</span>`
-  )
   return `<section aria-labelledby="h-manual">
 <h2 id="h-manual">手动融入 · ${blends.length} 人</h2>
-<p class="sec-intro">弹幕大多是复读别人（跟队形或 +1），也会自己说话，看不出用了工具。只标记，不处置：实时模式不会因此封禁或豁免任何人。按复读条数排序，色条是每人文字弹幕的构成。</p>
-<div class="legend">${legend.join('')}</div>
+<p class="sec-intro">弹幕大多是复读别人（跟队形或 +1），也会自己说话，看不出用了工具。只标记，不处置：实时模式不会因此封禁或豁免任何人。按复读条数排序。</p>
 <ol class="manual">
 ${blends.map((blend, i) => manualEntry(ctx, blend, i + 1)).join('\n')}
 </ol>
@@ -494,44 +509,80 @@ ${blends.map((blend, i) => manualEntry(ctx, blend, i + 1)).join('\n')}
 
 /** The `n`th viewer in the 手动融入 list. */
 function manualEntry(ctx: Context, blend: ManualBlend, n: number): string {
-  const { report, at, flaggedByKey } = ctx
+  const { report, flaggedByKey } = ctx
   const user = flaggedByKey.get(userKey(blend))
   const pill = user
     ? `<a class="pill ${user.verdict}" href="#${cardId(user)}">${VERDICT_LABELS[user.verdict]} ${formatScore(user.score)}</a>`
     : ''
   const room = report.archive.rooms.length > 1 ? `房间 ${blend.roomId} · ` : ''
-  const rows = (blend.history ?? []).map(send => row(at, send.at, send.text, tally(send)))
   return `<li id="${manualId(n)}">
 <div class="card-h">${who(ctx, blend)}${pill}</div>
-${copyBar(blend)}
-<p class="facts">${room}${describeCopying(blend)}</p>
-${collapsed(`全部 ${count(rows.length)} 条文字弹幕`, rows)}
+${partsOf(ctx, blend)}
+<p class="facts">${room}${copied(blend)}</p>
+${allDanmaku(ctx, blend)}
 </li>`
 }
 
-/** How a counted send was made, marked in its part of the copy bar's color. */
+/** How a counted send was made, marked in its part's color. */
 function tally(send: TalliedSend): string {
-  if (send.senders === 0) return via(COPY_KINDS.own, 'own')
-  return via(
-    copyNote(send, from => pii(Bun.escapeHTML(from))),
-    'from' in send ? 'plus-one' : 'chant'
-  )
+  const kind = sendKind(send)
+  return via(kind === 'own' ? COUNTED.own : copyNote(send, from => pii(Bun.escapeHTML(from))), kind)
 }
 
-/** A viewer's text danmaku as chants, +1s and lines of their own; the section's legend names the parts. */
-function copyBar(blend: ManualBlend): string {
-  const counts: [CopyKind, number][] = [
-    ['chant', blend.chants],
-    ['plus-one', blend.copies - blend.chants],
-    ['own', blend.sends - blend.copies],
+/** The user's danmaku split into parts, when the 手动融入 tally was kept for them. */
+function partsOf({ activity }: Context, user: { roomId: number; uid: number }): string {
+  const mix = activity.mixes.get(userKey(user))
+  return mix ? partsBar(mix) : ''
+}
+
+/**
+ * A bar splitting the danmaku into chants, +1s, lines of their own and, in gray, the kinds the tally leaves out, over
+ * a legend naming and counting each; hovering or tapping a part says what it holds.
+ */
+function partsBar({ counts, sources, lagMs }: DanmakuMix): string {
+  const counted = (part: CountedKind, ...notes: string[]): BarPart => ({
+    part,
+    name: COUNTED[part],
+    n: counts[part],
+    notes,
+  })
+  const leftOut = (Object.keys(LEFT_OUT) as LeftOutKind[]).filter(kind => counts[kind] > 0)
+  const all: BarPart[] = [
+    counted('chant', '复读前一分钟内 3 人以上在刷的内容'),
+    counted(
+      'plus-one',
+      '复读一两个人刚发的内容',
+      ...(lagMs === null ? [] : [`来自 ${sources} 人，通常比原弹幕晚 ${formatGap(lagMs)}`])
+    ),
+    counted('own', '前一分钟内没有其他人发过的内容'),
+    {
+      part: 'other',
+      name: ZH_LIST.format(leftOut.map(kind => LEFT_OUT[kind])),
+      n: leftOut.reduce((sum, kind) => sum + counts[kind], 0),
+      notes: [
+        ...(leftOut.length > 1 ? [leftOut.map(kind => `${LEFT_OUT[kind]} ${count(counts[kind])} 条`).join(' · ')] : []),
+        '单独发的短句（如「？」）、表情和 @ 回复不算复读，也不算自己说的',
+      ],
+    },
   ]
-  const parts = counts.filter(([, n]) => n > 0)
-  const share = (n: number) => `${Math.round((n / blend.sends) * 100)}%`
-  const label = parts.map(([kind, n]) => `${COPY_KINDS[kind]} ${n} 条（${share(n)}）`).join('，')
-  const segments = parts.map(
-    ([kind, n]) => `<i class="${kind}" style="flex-grow:${n}" data-tip="${COPY_KINDS[kind]} ${n} 条 · ${share(n)}"></i>`
-  )
-  return `<div class="copy-bar" role="img" aria-label="${blend.sends} 条文字弹幕：${label}">${segments.join('')}</div>`
+  const parts = all.filter(item => item.n > 0)
+  const total = parts.reduce((sum, item) => sum + item.n, 0)
+  if (total === 0) return ''
+  const share = (n: number) => (n < total / 100 ? '<1%' : `${Math.round((n / total) * 100)}%`)
+  // A part's segment and legend entry share one tooltip: a headline over what the part holds
+  const tip = ({ name, n, notes }: BarPart) =>
+    `data-tip="${Bun.escapeHTML(`${name} · ${count(n)} 条 · 占 ${share(n)}`)}" data-tip-note="${Bun.escapeHTML(notes.join('\n'))}"`
+  const bar = parts.map(item => `<i class="${item.part}" style="flex-grow:${item.n}" ${tip(item)}></i>`).join('')
+  const legend = parts.map(item => {
+    // The gray part counts each kind it holds
+    const key =
+      item.part === 'other'
+        ? leftOut.map(kind => `<span>${LEFT_OUT[kind]}<b>${count(counts[kind])}</b></span>`).join('·')
+        : `${item.name}<b>${count(item.n)}</b>`
+    return `<span ${tip(item)}><i class="swatch-seg ${item.part}"></i>${key}</span>`
+  })
+  const label = parts.map(item => `${item.name} ${count(item.n)} 条（${share(item.n)}）`).join('，')
+  return `<div class="parts"><div class="parts-bar" role="img" aria-label="${Bun.escapeHTML(`${count(total)} 条弹幕：${label}`)}">${bar}</div><p class="legend parts-key">${legend.join('')}</p></div>`
 }
 
 function notes({ report }: Context): string {
@@ -540,8 +591,9 @@ function notes({ report }: Context): string {
   return `<section aria-labelledby="h-notes" class="foot">
 <h2 id="h-notes">说明</h2>
 <p>分数 0–100，由 ${windowMs / 60_000} 分钟检测窗口内的重复次数与自动化证据（不可见字符、固定节拍、发送节拍、模板轮播、跟风触发、多号同步等）算出。分数 ≥ ${spamScore} 且自动化证据 ≥ ${minAutomation} 判为独轮车，≥ ${suspectScore} 为可疑；单纯的重复（刷屏量）不算自动化证据。</p>
-<p>每位用户的模式、证据和样本取自其分数最高的时刻，点开每条内容可看样本，点开「全部弹幕」可看其在归档里发的每一条，和手动融入一样标出跟队形、+1 还是自己说的（表情、@ 回复和短句除外）；标记时段是分数保持在可疑及以上的连续时间。工具插入的不可见字符显示为 ${chip('U+00AD')} 这样的编号。</p>
-<p>手动融入按整场统计，不看检测窗口：文字弹幕大多是复读别人刚发过的内容，换内容时也常换成自己说的，且整场没出现用工具的迹象。点开「全部文字弹幕」可看每条算作跟队形、+1 还是自己说的；表情、@ 回复和单独发的短句（如「？」「哈哈哈」）不计入。</p>
+<p>每位用户的模式、证据和样本取自其分数最高的时刻，点开每条内容可看样本；标记时段是分数保持在可疑及以上的连续时间。工具插入的不可见字符显示为 ${chip('U+00AD')} 这样的编号。</p>
+<p>色条是用户在归档里全部弹幕的构成：跟队形、+1、自己说的，灰色部分是单独发的短句（如「？」）、表情和 @ 回复，不算复读也不算自己说的。悬停或点按色条可看每部分的说明；点开「全部弹幕」可看其发的每一条，各自标出属于哪一部分。</p>
+<p>手动融入按整场统计，不看检测窗口：文字弹幕大多是复读别人刚发过的内容，换内容时也常换成自己说的，且整场没出现用工具的迹象；单独发的短句（如「？」「哈哈哈」）、表情和 @ 回复不计入。</p>
 <p>右下角的「打码」会模糊观众的用户名和 UID（主播名和房间号照常显示），方便截图分享。它只改变显示，用户名和 UID 仍在 HTML 文件里，直接分享文件就等于分享全部内容。</p>
 <p>时间为 ${report.archive.messages > 0 ? utcOffsets(report.archive.from, report.archive.to) : utcOffset(generatedAt)}。本报告是单个 HTML 文件，离线也能打开。由 ${link(REPO_URL, Bun.escapeHTML(report.tool))} 生成于 ${dateTime(generatedAt)}。</p>
 </section>`

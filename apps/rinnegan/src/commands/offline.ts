@@ -98,7 +98,9 @@ export async function runOffline(options: OfflineOptions): Promise<number> {
     const markdownPath = join(config.reportDir, `${name}.md`)
     const htmlPath = join(config.reportDir, `${name}.html`)
     const histories = new Map<string, TalliedSend[]>()
-    for (const summary of summaries) if (summary.history) histories.set(userKey(summary), summary.history)
+    for (const listed of [...summaries, ...report.manualBlends]) {
+      if (listed.history) histories.set(userKey(listed), listed.history)
+    }
     const html = renderHtml(report, buildActivity(messages, report.users, report.manualBlends, histories), {
       archives: options.files.map(file => basename(file)),
     })
