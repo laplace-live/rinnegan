@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -130,5 +130,12 @@ describe('rinnegan CLI', () => {
     const html = await Bun.file(join(reports, page)).text()
     // Every send of the loop is a line of its own, which only the tally can tell
     expect(html).toMatch(/aria-label="(\d+) 条弹幕：自己说的 \1 条（100%）"/)
+    // The audit records the options the detector ran with, not the config's
+    const logs = join(dir, 'logs')
+    const start = readdirSync(logs)
+      .flatMap(name => readFileSync(join(logs, name), 'utf8').trim().split('\n'))
+      .map(line => JSON.parse(line))
+      .find(entry => entry.event === 'session-start' && entry.files?.includes(archive))
+    expect(start?.detector.manualHistory).toBe(true)
   })
 })

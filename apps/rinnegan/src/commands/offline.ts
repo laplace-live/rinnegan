@@ -33,13 +33,15 @@ export async function runOffline(options: OfflineOptions): Promise<number> {
   const { config } = options
   const audit = new AuditLog({ dir: config.logDir, mode: 'offline' })
   const startedAt = Date.now()
+  // Only the written reports read the 手动融入 history (the HTML's tags, lists and bars), so keep it exactly then
+  const detector = new Detector({ ...config.detector, manualHistory: options.writeFiles })
   audit.write('session-start', {
     version: VERSION,
     files: options.files,
     rooms: config.live.rooms,
     since: options.since ?? null,
     until: options.until ?? null,
-    detector: config.detector,
+    detector: detector.options,
   })
 
   const archives = await Promise.all(options.files.map(readArchive))
@@ -49,8 +51,6 @@ export async function runOffline(options: OfflineOptions): Promise<number> {
     { rooms: config.live.rooms, since: options.since, until: options.until, includeMirror: config.live.includeMirror }
   )
 
-  // Only the written reports read the 手动融入 history (the HTML's tags, lists and bars), so keep it exactly then
-  const detector = new Detector({ ...config.detector, manualHistory: options.writeFiles })
   for (const message of messages) detector.ingest(message)
   const summaries = detector.summaries()
 
