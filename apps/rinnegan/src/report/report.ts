@@ -222,7 +222,7 @@ export function renderConsole(
 }
 
 /** e.g. `复读 43/67 条（跟队形 18 条，+1 了 23 人的 25 条，通常比原弹幕晚 6.3s），自己说的 24 条` */
-export function describeCopying(blend: ManualBlend): string {
+function describeCopying(blend: ManualBlend): string {
   const parts: string[] = []
   if (blend.chants > 0) parts.push(`跟队形 ${blend.chants} 条`)
   const plusOnes = blend.copies - blend.chants

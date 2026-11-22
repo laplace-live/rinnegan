@@ -71,6 +71,24 @@ export interface Badges {
   medalLevel: number
 }
 
+/** Danmaku the 手动融入 tally leaves out: lone short reactions such as 「？」, stickers and @-replies. */
+export type LeftOutKind = 'short' | 'emote' | 'reply'
+
+/** What the 手动融入 tally counted a text danmaku as: a chant, a +1 or a line of their own. */
+export type CountedKind = 'chant' | 'plus-one' | 'own'
+
+/** How the 手动融入 tally read a danmaku: what it counted it as, or the kind it leaves out. */
+export type DanmakuKind = CountedKind | LeftOutKind
+
+/** One user's danmaku counted by {@link DanmakuKind}, for the bar on their card. */
+export interface DanmakuMix {
+  counts: Record<DanmakuKind, number>
+  /** Viewers whose lines they +1'd */
+  sources: number
+  /** Median delay of their +1s after the line they copied, ms; null without +1s */
+  lagMs: number | null
+}
+
 /** What the HTML report draws beyond the JSON report, gathered from the judged danmaku. */
 export interface Activity {
   /** Streamer names by room, from their own danmaku */
@@ -81,19 +99,20 @@ export interface Activity {
   gaps: Map<string, GapHistogram>
   /** As of each flagged user's peak, or a 手动融入 viewer's last danmaku, by {@link userKey} */
   badges: Map<string, Badges>
-  /** Every danmaku of each flagged user, oldest first, by {@link userKey} */
+  /** Every danmaku of each flagged user and 手动融入 viewer, oldest first, by {@link userKey} */
   danmaku: Map<string, ChatMessage[]>
   /**
    * How the 手动融入 tally counted each of those danmaku, for users given a history; stickers, @-replies and lone short
    * reactions have no entry
    */
   tallies: Map<string, Map<ChatMessage, TalliedSend>>
+  /** Each tallied user's danmaku by kind, by {@link userKey} */
+  mixes: Map<string, DanmakuMix>
 }
 
 /**
- * Timelines, send-gap histograms, badges and danmaku for the flagged `users`, and badges for the 手动融入 `copiers`;
- * `messages` sorted oldest first. `histories`: each flagged user's tallied sends by {@link userKey}, which tag their
- * danmaku.
+ * Timelines, send-gap histograms, badges and danmaku for the flagged `users`, and badges and danmaku for the 手动融入
+ * `copiers`; `messages` sorted oldest first. `histories`: tallied sends by {@link userKey}, which tag those danmaku.
  */
 export function buildActivity(
   messages: readonly ChatMessage[],
@@ -110,14 +129,11 @@ export function buildActivity(
     if (message.userType === 100 && message.uname) hosts.set(message.roomId, message.uname)
     const key = userKey(message)
     const user = flagged.get(key)
-    if (!user) {
-      if (marked.has(key)) badges.set(key, badgesOf(message))
-      continue
-    }
+    if (!user && !marked.has(key)) continue
     const own = danmaku.get(key)
     if (own) own.push(message)
     else danmaku.set(key, [message])
-    if (message.timestamp <= user.peakAt || !badges.has(key)) badges.set(key, badgesOf(message))
+    if (!user || message.timestamp <= user.peakAt || !badges.has(key)) badges.set(key, badgesOf(message))
   }
   const sends = new Map([...danmaku].map(([key, own]) => [key, own.map(message => message.timestamp)]))
 
@@ -127,11 +143,40 @@ export function buildActivity(
     if (histogram) gaps.set(userKey(user), histogram)
   }
   const tallies = new Map<string, Map<ChatMessage, TalliedSend>>()
+  const mixes = new Map<string, DanmakuMix>()
   for (const [key, own] of danmaku) {
     const history = histories.get(key)
-    if (history) tallies.set(key, tag(own, history))
+    if (!history) continue
+    const tags = tag(own, history)
+    tallies.set(key, tags)
+    mixes.set(key, mixOf(own, tags))
   }
-  return { hosts, periods: periodsOf(messages, users, sends), gaps, badges, danmaku, tallies }
+  return { hosts, periods: periodsOf(messages, users, sends), gaps, badges, danmaku, tallies, mixes }
+}
+
+/** What a send the tally counted was. */
+export function sendKind(send: TalliedSend): CountedKind {
+  return send.senders === 0 ? 'own' : 'from' in send ? 'plus-one' : 'chant'
+}
+
+/** What a danmaku the tally left out is; any text the tally passes over is a lone short reaction. */
+export function leftOutKind(message: ChatMessage): LeftOutKind {
+  return message.isEmote ? 'emote' : message.isReply ? 'reply' : 'short'
+}
+
+function mixOf(sent: readonly ChatMessage[], tags: ReadonlyMap<ChatMessage, TalliedSend>): DanmakuMix {
+  const counts: Record<DanmakuKind, number> = { chant: 0, 'plus-one': 0, own: 0, short: 0, emote: 0, reply: 0 }
+  const sources = new Set<string>()
+  const lags: number[] = []
+  for (const message of sent) {
+    const send = tags.get(message)
+    counts[send ? sendKind(send) : leftOutKind(message)]++
+    if (send && 'from' in send) {
+      sources.add(send.from)
+      lags.push(send.lagMs)
+    }
+  }
+  return { counts, sources: sources.size, lagMs: lags.length > 0 ? median(lags) : null }
 }
 
 /** Pair each danmaku with its tally entry: both run oldest first, and the tally skips some danmaku. */

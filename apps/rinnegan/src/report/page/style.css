@@ -23,6 +23,8 @@
   --chant: #2a78d6;
   --plus-one: #e87ba4;
   --own: #008300;
+  /* What the 手动融入 tally leaves out: a gray close to the surface, apart from all three hues in both modes */
+  --other: var(--axis);
   /* Tints from their color and the surface, so dark mode needs none of its own */
   --accent-wash: color-mix(in srgb, var(--accent) 10%, var(--surface));
   --manual-wash: color-mix(in srgb, var(--manual) 10%, var(--surface));
@@ -289,21 +291,27 @@ section {
 }
 
 .swatch-seg.chant,
-.copy-bar .chant,
+.parts-bar .chant::before,
 .via.chant::before {
   background: var(--chant);
 }
 
 .swatch-seg.plus-one,
-.copy-bar .plus-one,
+.parts-bar .plus-one::before,
 .via.plus-one::before {
   background: var(--plus-one);
 }
 
 .swatch-seg.own,
-.copy-bar .own,
+.parts-bar .own::before,
 .via.own::before {
   background: var(--own);
+}
+
+.swatch-seg.other,
+.parts-bar .other::before,
+.via.other::before {
+  background: var(--other);
 }
 
 .fig {
@@ -703,15 +711,44 @@ a.pill {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 
-.copy-bar {
-  display: flex;
+/* A user's danmaku by part: a thin bar over a legend that counts each part */
+.parts {
+  display: grid;
   gap: 2px;
-  height: 8px;
 }
 
-.copy-bar i {
+.parts-bar {
+  display: flex;
+  gap: 2px;
+}
+
+/* The padding is hover and tap room; a part never shrinks below a dot */
+.parts-bar i {
   flex: 1 1 0;
-  min-width: 2px;
+  min-width: 8px;
+  padding-block: 4px;
+}
+
+.parts-bar i::before {
+  content: "";
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+}
+
+.parts-key b {
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.parts [data-tip] {
+  cursor: default;
+}
+
+.parts-key [tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
   border-radius: 4px;
 }
 
@@ -723,9 +760,7 @@ a.pill {
   margin-left: 8px;
 }
 
-.via.chant::before,
-.via.plus-one::before,
-.via.own::before {
+.via::before {
   content: "";
   display: inline-block;
   width: 8px;
@@ -884,6 +919,14 @@ summary {
   line-height: 1.4;
   pointer-events: none;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+#tip .note {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  opacity: 0.75;
+  white-space: pre-line;
 }
 
 @media print {

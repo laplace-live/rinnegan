@@ -177,16 +177,47 @@ describe('buildActivity', () => {
     expect(activity.danmaku.has('1:7')).toBe(false)
   })
 
-  test('reads 手动融入 viewers’ badges from their last danmaku and draws nothing for them', () => {
+  test('keeps 手动融入 viewers’ danmaku, reads their badges from the last one and charts nothing for them', () => {
     const messages = [
       message(3, at(20, 0), { medalLevel: 9, medalName: '奶糖花' }),
+      message(9, at(20, 1)),
       message(3, at(20, 5), { guardType: 3, medalLevel: 10, medalName: '奶糖花' }),
     ]
     const activity = buildActivity(messages, [], [{ roomId: 1, uid: 3 }])
     expect(activity.badges.get('1:3')).toEqual({ userType: 0, guardType: 3, medalName: '奶糖花', medalLevel: 10 })
+    expect(activity.danmaku.get('1:3')?.map(sent => sent.timestamp)).toEqual([at(20, 0), at(20, 5)])
+    expect(activity.danmaku.has('1:9')).toBe(false)
     expect(activity.periods).toEqual([])
     expect(activity.gaps.size).toBe(0)
-    expect(activity.danmaku.size).toBe(0)
+    // No history, no tally to split their danmaku by
+    expect(activity.mixes.size).toBe(0)
+  })
+
+  test('counts each tallied user’s danmaku by kind, with whose lines they +1’d and how late', () => {
+    const sent = [
+      message(3, at(20, 0), { text: '才八点' }),
+      message(3, at(20, 1), { text: '你太云了' }),
+      message(3, at(20, 2), { text: '？' }),
+      message(3, at(20, 3), { text: '晚上好' }),
+      message(3, at(20, 4), { text: '[doge]', isEmote: true }),
+      message(3, at(20, 5), { text: '你太云了' }),
+      message(3, at(20, 6), { text: '你好', isReply: true }),
+      message(3, at(20, 7), { text: '好听' }),
+    ]
+    const history: TalliedSend[] = [
+      { at: at(20, 0), text: '才八点', senders: 22 },
+      { at: at(20, 1), text: '你太云了', senders: 1, from: '路人', lagMs: 2000 },
+      { at: at(20, 3), text: '晚上好', senders: 0 },
+      { at: at(20, 5), text: '你太云了', senders: 2, from: '路人', lagMs: 6000 },
+      { at: at(20, 7), text: '好听', senders: 1, from: '另一个人', lagMs: 3000 },
+    ]
+    const activity = buildActivity(sent, [], [{ roomId: 1, uid: 3 }], new Map([['1:3', history]]))
+    expect(activity.mixes.get('1:3')).toEqual({
+      counts: { chant: 1, 'plus-one': 3, own: 1, short: 1, emote: 1, reply: 1 },
+      sources: 2,
+      lagMs: 3000,
+    })
+    expect(activity.tallies.get('1:3')?.size).toBe(5)
   })
 
   test('has nothing to draw without flagged users', () => {
