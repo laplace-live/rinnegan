@@ -7,7 +7,9 @@ import { DEFAULT_DETECTOR_OPTIONS, Detector } from './detector.ts'
 import {
   type AutoBlendOptions,
   INVISIBLE_PRESETS,
+  type LoopOptions,
   mergeStreams,
+  novelText,
   type Persona,
   seededRandom,
   simulateAutoBlend,
@@ -23,6 +25,7 @@ import {
   simulateStickerSweep,
   simulateTrendChaser,
   TREND_CHASERS,
+  wholeSeconds,
 } from './testing/simulate.ts'
 
 const T0 = Date.parse('2026-10-20T12:00:00Z')
@@ -65,6 +68,35 @@ const LONG_CROWD = simulateCrowd({
   lines: BUSY_ROOM.lines.map(line => `${line}！${'主播今天的状态真的太好了大家一起刷起来'.repeat(2)}`),
 })
 
+/** A novel read out by chatterbox, cut at `maxLength`, one chunk every `intervalSec`. */
+function readNovel(
+  uid: number,
+  intervalSec: number,
+  maxLength: number,
+  extra: Partial<LoopOptions> = {}
+): ChatMessage[] {
+  return simulateChatterboxLoop({
+    persona: persona(uid),
+    template: novelText(400, seededRandom(uid)),
+    startAt: T0,
+    durationMs: 40 * MINUTE,
+    intervalSec,
+    maxLength,
+    ...extra,
+  })
+}
+
+/** One danmaku from `uid` at about `at`. */
+function say(uid: number, text: string, at: number): ChatMessage {
+  return simulateFixedTimer({
+    persona: persona(uid),
+    texts: [text],
+    startAt: at,
+    sends: 1,
+    intervalMs: 1,
+  })[0] as ChatMessage
+}
+
 /** Chants of 3 viewers out of `viewers`, one at a time, `gapMs` apart: nothing ever overlaps. */
 function chantRoom(rounds: number, gapMs: [number, number], viewers = 3, seed = 7): ChatMessage[] {
   const random = seededRandom(seed)
@@ -74,17 +106,7 @@ function chantRoom(rounds: number, gapMs: [number, number], viewers = 3, seed = 
     const picked = Array.from({ length: viewers }, (_, i) => 300 + i)
       .sort(() => random() - 0.5)
       .slice(0, 3)
-    picked.forEach((uid, i) => {
-      out.push(
-        ...simulateFixedTimer({
-          persona: persona(uid),
-          texts: [`口号${r}`],
-          startAt: at + i * 400,
-          sends: 1,
-          intervalMs: 1,
-        })
-      )
-    })
+    for (const [i, uid] of picked.entries()) out.push(say(uid, `口号${r}`, at + i * 400))
     at += gapMs[0] + random() * (gapMs[1] - gapMs[0])
   }
   return mergeStreams(out)
@@ -223,6 +245,87 @@ describe('chatterbox 独轮车 is caught', () => {
     expect(judge(messages, 110).peak?.verdict).toBe('spam')
   })
 
+  describe('a novel read out chunk by chunk, no chunk repeating', () => {
+    test.each([
+      [1, 38],
+      [10, 35],
+      [35, 40],
+    ])('one every %d s, cut at %d chars', (intervalSec, maxLength) => {
+      const { peak, spamAfter } = judge(readNovel(120, intervalSec, maxLength), 120)
+      expect(peak?.verdict).toBe('spam')
+      expect(peak?.pattern).toBe('template')
+      expect(peak?.timedSends).toBe(true)
+      // Every chunk in the window is a timed send, and `repeats` and the evidence count them all
+      expect(peak?.repeats).toBe(peak?.windowMessages)
+      expect(peak?.evidence.find(item => item.kind === 'template-cycle')?.detail).toStartWith(`${peak?.repeats} 条长句`)
+      expect(spamAfter).toBeLessThanOrEqual(22)
+    })
+
+    test('with lines typed by hand in between', () => {
+      const lines = ['？', '哈哈哈', '主播好', '你说得对', '笑死我了', '这段我看过']
+      const chat = simulateHumanChat({ persona: persona(121), lines, startAt: T0, sends: 60 })
+      const { peak } = judge(mergeStreams(readNovel(121, 10, 35), chat), 121)
+      expect(peak?.verdict).toBe('spam')
+      expect(peak?.evidence.find(item => item.kind === 'template-cycle')?.detail).toContain('其间另发')
+    })
+
+    test('shows the chunks it read last, not the lines typed in between', () => {
+      const chunks = readNovel(122, 10, 35)
+      // A repeated line of the user's own, which an assessment otherwise shows first
+      const typed = chunks.filter((_, i) => i % 7 === 3).map(chunk => say(122, '？', chunk.timestamp + 4000))
+      const detector = new Detector()
+      let last: Assessment | undefined
+      for (const message of mergeStreams(chunks, typed))
+        if (message.text !== '？') last = detector.ingest(message).assessment
+        else detector.ingest(message)
+      expect(last?.clusters.map(cluster => cluster.samples[0]?.text)).toEqual(
+        chunks
+          .slice(-3)
+          .reverse()
+          .map(message => message.text)
+      )
+    })
+
+    test('while chanting a line by hand in between', () => {
+      // The chant's resends would set the beat at ~9 s; the chunks keep theirs.
+      const chant = simulateHumanChant({ persona: persona(124), line: '流汗', startAt: T0, sends: 200 })
+      const { peak } = judge(mergeStreams(readNovel(124, 35, 40), chant), 124)
+      expect(peak?.verdict).toBe('spam')
+      expect(peak?.timedSends).toBe(true)
+    })
+
+    test('with a line of their own typed 3 s after every other chunk', () => {
+      // Gaps of 3, 7 and 10 s come up equally often, so the densest band of gaps needn't be the timer's beat
+      const chunks = simulateFixedTimer({
+        persona: persona(125),
+        texts: novelText(60, seededRandom(125)).split('\n'),
+        startAt: T0,
+        sends: 60,
+        intervalMs: 10_000,
+      })
+      const own = novelText(30, seededRandom(126)).split('\n')
+      const typed = chunks
+        .filter((_, i) => i % 2 === 0)
+        .map((chunk, i) => say(125, (own[i] as string).slice(0, 12), chunk.timestamp + 3000))
+      expect(judge(mergeStreams(chunks, typed), 125).peak?.verdict).toBe('spam')
+    })
+
+    test('that sped up from 20 s to 10 s', () => {
+      // One chain through both speeds is mostly missed beats, and the 20 s beat finds too few changes; the fast part
+      // alone is on its beat
+      const lines = novelText(29, seededRandom(127)).split('\n')
+      const slow = lines.slice(0, 8).map((line, i) => say(127, line, T0 + i * 20_000))
+      const fast = lines.slice(8).map((line, i) => say(127, line, T0 + 150_000 + i * 10_000))
+      const { peak } = judge([...slow, ...fast], 127)
+      expect(peak?.verdict).toBe('spam')
+      expect(peak?.timedSends).toBe(true)
+    })
+
+    test('a random interval stays below spam, as a looped line does', () => {
+      expect(judge(readNovel(123, 10, 35, { randomInterval: true }), 123).peak?.verdict).not.toBe('spam')
+    })
+  })
+
   test('Copy Ninja mirror of a loop', () => {
     const master = simulateChatterboxLoop({
       persona: persona(111),
@@ -279,13 +382,7 @@ describe('chatterbox 自动融入 is caught', () => {
       Array.from({ length: 15 }, (_, r) => {
         const at = T0 + r * 12_000
         const line = (uid: number, text: string, offset: number, isReply = false): ChatMessage => ({
-          ...(simulateFixedTimer({
-            persona: persona(uid),
-            texts: [text],
-            startAt: at + offset,
-            sends: 1,
-            intervalMs: 1,
-          })[0] as ChatMessage),
+          ...say(uid, text, at + offset),
           isReply,
         })
         return [
@@ -400,8 +497,6 @@ describe('chatterbox 自动融入 is caught', () => {
   })
 
   test('an account back from idle on the line it left with still counts that switch', () => {
-    const say = (uid: number, line: string, at: number) =>
-      simulateFixedTimer({ persona: persona(uid), texts: [line], startAt: at, sends: 1, intervalMs: 1 })
     // Flagged, so going idle keeps its state; it stops on 才八点, the line the swarm opens with once a window has passed.
     const loop = simulateChatterboxLoop({
       persona: persona(421),
@@ -414,8 +509,8 @@ describe('chatterbox 自动融入 is caught', () => {
     for (let r = 0; r < 9; r++) {
       const at = T0 + DEFAULT_DETECTOR_OPTIONS.windowMs + 3 * MINUTE + r * 20_000
       const line = r === 0 ? '才八点' : `梗${r}`
-      for (const [i, uid] of [31, 32, 33].entries()) swarm.push(...say(uid, line, at + i * 300))
-      swarm.push(...say(420, line, at + 1600), ...say(421, line, at + 1650))
+      for (const [i, uid] of [31, 32, 33].entries()) swarm.push(say(uid, line, at + i * 300))
+      swarm.push(say(420, line, at + 1600), say(421, line, at + 1650))
     }
     const detector = new Detector()
     let last: Assessment | undefined
@@ -539,9 +634,95 @@ describe('humans are never judged spam', () => {
     }
   })
 
+  test("+1-ing other viewers' long lines one after another as fast as allowed, every ~4.6 s", () => {
+    // Every line is new, so nothing repeats: only whose lines they are tells this from a text read out on a timer.
+    const lines = novelText(400, seededRandom(9)).split('\n')
+    const room = lines.map((line, i) => say(600 + (i % 40), line, T0 + i * 2000))
+    for (let seed = 1; seed <= SEEDS; seed++) {
+      const random = seededRandom(seed)
+      const copies: ChatMessage[] = []
+      for (let at = T0 + 10_000; at < T0 + lines.length * 2000; at += 4350 + random() * 500) {
+        const source = room[Math.floor((at - T0) / 2000)] as ChatMessage
+        copies.push({ ...source, id: `${source.id}-copy`, uid: 216, uname: 'user216', timestamp: Math.round(at) })
+      }
+      expect(judge(mergeStreams(room, copies), 216).peak?.verdict).not.toBe('spam')
+    }
+  })
+
+  test('counting to 60 once a second', () => {
+    for (let seed = 1; seed <= SEEDS; seed++) {
+      const random = seededRandom(seed)
+      const counts: ChatMessage[] = []
+      for (let i = 1, at = T0; i <= 60; i++, at += 950 + random() * 150) counts.push(say(217, String(i), at))
+      expect(judge(counts, 217).peak?.verdict).not.toBe('spam')
+    }
+  })
+
   test('+1-ing a busy room every ~6 s', () => {
     const copier = simulatePlusOne(CROWD, persona(207), 25)
     expect(judge(mergeStreams(CROWD, copier), 207).peak?.verdict).not.toBe('spam')
+  })
+})
+
+describe('whole-second timestamps', () => {
+  test('a novel read out every 10 s is still caught', () => {
+    const { peak } = judge(wholeSeconds(readNovel(130, 10, 35)), 130)
+    expect(peak?.verdict).toBe('spam')
+    expect(peak?.timedSends).toBe(true)
+  })
+
+  test('a line looped every 10 s is still caught', () => {
+    const loop = simulateChatterboxLoop({
+      persona: persona(131),
+      template: '主播好可爱',
+      startAt: T0,
+      durationMs: 10 * MINUTE,
+      intervalSec: 10,
+    })
+    expect(judge(wholeSeconds(loop), 131).peak?.verdict).toBe('spam')
+  })
+
+  test('chanting by hand fits no send tick', () => {
+    for (let seed = 1; seed <= 40; seed++) {
+      const chant = simulateHumanChant({
+        persona: persona(132),
+        line: '老公天下第一',
+        startAt: T0,
+        sends: 60,
+        random: seededRandom(seed),
+      })
+      const { peak } = judge(wholeSeconds(chant), 132)
+      expect(peak?.verdict).not.toBe('spam')
+      expect(peak?.evidence.map(item => item.kind)).not.toContain('send-tick')
+    }
+  })
+
+  // A best chain may skip a beat or two, which whole seconds leave room to fit by chance. The listed seeds did: at 3 s
+  // through a runner-up beat or a steady stretch, at 6 s with gaps spread over the whole tolerance.
+  test.each([
+    [3, [4, 7, 23, 49]],
+    [6, [162, 171]],
+  ])('chatting long lines of their own every ~%d s stays below spam', (medianSec, chancy) => {
+    for (const seed of [...chancy, ...Array.from({ length: 30 }, (_, i) => i + 1)]) {
+      const random = seededRandom(seed)
+      const chat: ChatMessage[] = []
+      let at = T0
+      for (const line of novelText(300, random).split('\n')) {
+        // Log-normal gaps, σ 0.5 from a sum of three uniforms
+        at += Math.max(1500, medianSec * 1000 * Math.exp(random() + random() + random() - 1.5))
+        chat.push(say(133, line.slice(0, 30), at))
+      }
+      expect([seed, judge(wholeSeconds(chat), 133).peak?.verdict]).not.toEqual([seed, 'spam'])
+    }
+  })
+
+  test('accounts switching lines in the same second are not paired', () => {
+    const room = chantRoom(40, [20_000, 40_000])
+    const swarm = [410, 411, 412].map((uid, i) =>
+      simulateAutoBlend(room, { persona: persona(uid), latencyMs: [900 + i * 60, 900 + i * 60], jitterMs: 40 })
+    )
+    const { peak } = judge(wholeSeconds(mergeStreams(room, ...swarm)), 411)
+    expect(peak?.evidence.map(item => item.kind)).not.toContain('lockstep')
   })
 })
 

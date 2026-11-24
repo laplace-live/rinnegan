@@ -39,7 +39,9 @@ too, so a 手动融入 viewer's `history`, and a flagged user's in `summaries()`
 of their own; that grows with every danmaku, so pass `manualHistory: false` for long live sessions.
 
 Without `@laplace.live/event-types`, keep `skipLibCheck` on, since the types of `toChatMessage` and `extractMessages`
-refer to it. Danmaku from elsewhere can be passed to `ingest` directly as a `ChatMessage`.
+refer to it. Danmaku from elsewhere can be passed to `ingest` directly as a `ChatMessage`, its `timestamp` in Unix ms.
+A source that keeps whole seconds only, such as Bilibili's own danmaku records, works too: the detector notices and
+leaves out the evidence that needs sub-second timing.
 
 ## Rank a whole archive
 
@@ -63,7 +65,10 @@ const copiers = detector.manualBlends() // 手动融入: viewers who copy the ro
 - `pattern`: `loop`, `burst`, `template`, `blend` (a trend-following bot such as Chatterbox's 自动融入) or `flood`.
 - `evidence`: what proves automation, each with a `kind`, a 0–1 `weight` and a `detail` in Chinese, plus the other
   viewers' `names` that `detail` quotes, for a UI that hides them.
-- `clusters`: the user's top repeated lines, with sample messages.
+- `clusters`: the user's top repeated lines, with sample messages; for a text read out on a timer, the lines it sent
+  last.
+- `repeats`: the extra sends behind `score`: repeats in the window, or as `triggerHits` (自动融入 line switches) and
+  `timedSends` (sends one timer made, a text read out line by line) say.
 
 `VERDICT_LABELS`, `PATTERN_LABELS`, `EVIDENCE_LABELS`, `SKIP_LABELS`, `GUARD_LABELS` and `USER_TYPE_LABELS` hold the
 Chinese names Rinnegan shows. `new Detector(options)` takes any of `DEFAULT_DETECTOR_OPTIONS` to override, such as the

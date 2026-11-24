@@ -59,6 +59,11 @@ describe('formatReason', () => {
     expect(formatReason('{pattern} {score} {unknown}', assessment(), 600_000)).toBe('循环独轮车 100 {unknown}')
   })
 
+  test('counts the timed sends of a text read out line by line, each line sent once', () => {
+    const reader = assessment({ pattern: 'template', repeats: 279, timedSends: true })
+    expect(formatReason('独轮车 ×{count}', reader, 600_000)).toBe('独轮车 ×279')
+  })
+
   test('returns exactly what Bilibili receives', () => {
     const top = assessment().clusters[0] as Assessment['clusters'][number]
     const long = assessment({ clusters: [{ ...top, samples: [{ timestamp: 0, text: '刷'.repeat(80) }] }] })
