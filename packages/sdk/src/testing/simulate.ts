@@ -163,6 +163,22 @@ export interface LoopOptions {
   latencyMs?: [number, number]
 }
 
+const NOVEL_CHARS =
+  '的一是了我不人在他有这个上们来到时大地为子中你说生国年着就那和要她出也得里后自以会家可下而过天去能对小多然于心学么之都好看起发当没成只如事把还用第样道想作种开美总从无情己面最女但现前些所同日手又行意动方期它头经长儿回位分爱老因很给名法间知世什两次使身者被高已亲其进此话常与活正感见明问力理点文几定本公特做外孩相西果走将月十实向声车全信重三机工物气每并别真打太新比才便夫再书部水像眼等体却加电主界门利海受听表德少克代员许先口由死安写性马光白或住难望教命花结乐色更拉东神记处让母父应直字场平报友关放至张认接告入笑内英军候民岁往何度山觉路带万男边风解叫任金快原吃妈变通师立象数四失满战远格士音轻目条呢'
+
+/** A novel's worth of distinct paragraphs (8–120 chars, some commas) for a 说书 template; same seed, same text. */
+export function novelText(paragraphs: number, random: () => number): string {
+  const chars = Array.from(NOVEL_CHARS)
+  const out: string[] = []
+  for (let p = 0; p < paragraphs; p++) {
+    const length = 8 + Math.floor(random() * 113)
+    let line = ''
+    while (line.length < length) line += random() < 0.08 ? '，' : chars[Math.floor(random() * chars.length)]
+    out.push(`${line}。`)
+  }
+  return out.join('\n')
+}
+
 /** Chatterbox 独轮车: loop the template through the 1010 ms send queue, keeping only sends Bilibili accepts. */
 export function simulateChatterboxLoop(options: LoopOptions): ChatMessage[] {
   const random = options.random ?? seededRandom(options.persona.uid)
@@ -515,4 +531,9 @@ export function simulateCrowd(options: {
 /** Merge streams into one time-ordered feed. */
 export function mergeStreams(...streams: ChatMessage[][]): ChatMessage[] {
   return streams.flat().sort(compareMessages)
+}
+
+/** `messages` as a log that keeps whole seconds only, like Bilibili's own records of a user's danmaku. */
+export function wholeSeconds(messages: readonly ChatMessage[]): ChatMessage[] {
+  return messages.map(message => ({ ...message, timestamp: Math.floor(message.timestamp / 1000) * 1000 }))
 }

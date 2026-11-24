@@ -18,6 +18,7 @@ import { AuditLog } from '@/audit/audit'
 import { BilibiliClient } from '@/bilibili'
 import { connectBilibili, NO_LOGIN, openStore, resolveLogin } from '@/commands/session'
 import { Enforcer } from '@/enforce/enforcer'
+import { repeatsKind } from '@/report/report'
 import { ConnectionState, LiveSource } from '@/sources/live'
 import { BanLifecycle, describeStoreUrl, expiryRule, MemoryBanStore, spendToUnbanRule } from '@/store'
 import { clock, count, fail, log, style, warn } from '@/util/console'
@@ -49,7 +50,7 @@ function describeAssessment(assessment: Assessment): string {
   const top = assessment.clusters[0]
   const sample = top?.samples[top.samples.length - 1]?.text ?? top?.key ?? ''
   const evidence = assessment.evidence.map(item => EVIDENCE_LABELS[item.kind]).join('、')
-  return `${assessment.uname}（${assessment.uid}）房间 ${assessment.roomId} · ${PATTERN_LABELS[assessment.pattern]} · ${assessment.triggerHits ? '跟风命中' : '窗口重复'} ${assessment.repeats} · ${evidence || '无自动化证据'} ·「${escapeInvisible(clip(sample, 30))}」`
+  return `${assessment.uname}（${assessment.uid}）房间 ${assessment.roomId} · ${PATTERN_LABELS[assessment.pattern]} · ${repeatsKind(assessment) ?? '窗口重复'} ${assessment.repeats} · ${evidence || '无自动化证据'} ·「${escapeInvisible(clip(sample, 30))}」`
 }
 
 /** Watch live danmaku until SIGINT/SIGTERM. Returns the exit code. */

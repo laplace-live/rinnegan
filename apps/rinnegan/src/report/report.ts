@@ -34,10 +34,12 @@ export interface ReportUser {
   verdict: Verdict
   score: number
   pattern: Pattern
-  /** Excess repeats in the window at the peak, or 自动融入 line switches when {@link triggerHits} */
+  /** Excess repeats in the window at the peak, or as {@link triggerHits} and {@link timedSends} say */
   repeats: number
   /** `repeats` counts 自动融入 line switches: trigger hits, or switches in step with another account */
   triggerHits: boolean
+  /** `repeats` counts sends one timer made, as a tool reading out a long text line by line does */
+  timedSends: boolean
   automation: number
   /** Total messages this user sent in the archive */
   messages: number
@@ -73,9 +75,14 @@ export function nameOf(user: { uname: string }): string {
   return user.uname || '(无名)'
 }
 
+/** What `repeats` counts when it isn't repeated messages, e.g. `跟风命中`; null when it is */
+export function repeatsKind(counts: { triggerHits?: boolean; timedSends?: boolean }): string | null {
+  return counts.triggerHits ? '跟风命中' : counts.timedSends ? '定时发送' : null
+}
+
 /** e.g. `窗口内重复 12 次` */
 export function repeatsText(user: ReportUser): string {
-  return `${user.triggerHits ? '跟风命中' : '窗口内重复'} ${user.repeats} 次`
+  return `${repeatsKind(user) ?? '窗口内重复'} ${user.repeats} 次`
 }
 
 export function buildReport(options: {
@@ -99,6 +106,7 @@ export function buildReport(options: {
       pattern: summary.peak.pattern,
       repeats: summary.peak.repeats,
       triggerHits: summary.peak.triggerHits ?? false,
+      timedSends: summary.peak.timedSends ?? false,
       automation: summary.peak.automation,
       messages: summary.messages,
       firstAt: summary.firstAt,
@@ -272,8 +280,9 @@ export function renderMarkdown(report: OfflineReport): string {
   out.push('| -: | --- | -: | --- | -: | --- | -: | --- | --- |')
   for (const user of report.users) {
     const top = user.clusters[0]
+    const kind = repeatsKind(user)
     out.push(
-      `| ${user.rank} | ${VERDICT_LABELS[user.verdict]}${tags(user)} | ${user.score} | ${cell(user.uname)} | ${user.uid} | ${PATTERN_LABELS[user.pattern]} | ${user.repeats}${user.triggerHits ? '（跟风命中）' : ''} | ${user.evidence.map(item => EVIDENCE_LABELS[item.kind]).join('、')} | ${top ? cell(`「${escapeInvisible(clip(top.key, 30))}」×${top.count}`) : ''} |`
+      `| ${user.rank} | ${VERDICT_LABELS[user.verdict]}${tags(user)} | ${user.score} | ${cell(user.uname)} | ${user.uid} | ${PATTERN_LABELS[user.pattern]} | ${user.repeats}${kind ? `（${kind}）` : ''} | ${user.evidence.map(item => EVIDENCE_LABELS[item.kind]).join('、')} | ${top ? cell(`「${escapeInvisible(clip(top.key, 30))}」×${top.count}`) : ''} |`
     )
   }
   for (const user of report.users) {

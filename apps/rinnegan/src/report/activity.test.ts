@@ -52,6 +52,7 @@ function flagged(uid: number, patch: Partial<ReportUser> = {}): ReportUser {
     pattern: 'loop',
     repeats: 30,
     triggerHits: false,
+    timedSends: false,
     automation: 0.9,
     messages: 0,
     firstAt: 0,

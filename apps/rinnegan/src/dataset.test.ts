@@ -13,12 +13,15 @@ import type { AutoBlendOptions, Persona } from '@/testing/simulate'
 import { readArchive } from '@/sources/archive'
 import {
   mergeStreams,
+  novelText,
   seededRandom,
   simulateAutoBlend,
   simulateChatterboxLoop,
+  simulateHumanChat,
   simulateRepeatBurst,
   simulateTrendChaser,
   TREND_CHASERS,
+  wholeSeconds,
 } from '@/testing/simulate'
 
 /** `references/` sits at the repo root, wherever `bun test` runs from */
@@ -223,6 +226,7 @@ describe.skipIf(!available)(`real archive ${ARCHIVE}`, () => {
   test('catches chatterbox loops injected into real traffic without new false positives', () => {
     const peak = messages.reduce((best, message) => Math.max(best, message.timestamp), 0)
     const start = peak - 3 * 3_600_000
+    const reader = { uid: 9_000_005, uname: 'inject-reader', roomId: 25034104 }
     const injected = [
       simulateChatterboxLoop({
         persona: { uid: 9_000_001, uname: 'inject-jitter', roomId: 25034104 },
@@ -250,11 +254,26 @@ describe.skipIf(!available)(`real archive ${ARCHIVE}`, () => {
         startAt: start + 90 * 60_000,
         sends: 20,
       }),
+      // A novel read out a chunk every 10 s, never repeating, while its owner chats by hand
+      simulateChatterboxLoop({
+        persona: reader,
+        template: novelText(400, seededRandom(5)),
+        startAt: start + 120 * 60_000,
+        durationMs: 30 * 60_000,
+        intervalSec: 10,
+        maxLength: 35,
+      }),
+      simulateHumanChat({
+        persona: reader,
+        lines: ['？', '哈哈哈', '这段我看过', '主播别急', '晚上好'],
+        startAt: start + 120 * 60_000,
+        sends: 40,
+      }),
     ]
     const detector = new Detector()
     for (const message of mergeStreams(messages, ...injected)) detector.ingest(message)
     const after = detector.summaries()
-    const bots = [9_000_001, 9_000_002, 9_000_003, 9_000_004]
+    const bots = [9_000_001, 9_000_002, 9_000_003, 9_000_004, 9_000_005]
     for (const uid of bots) {
       expect(after.find(summary => summary.uid === uid)?.peak.verdict).toBe('spam')
     }
@@ -262,6 +281,16 @@ describe.skipIf(!available)(`real archive ${ARCHIVE}`, () => {
     // Real uids run far past the injected ones, so exclude the bots by id rather than by range.
     const real = after.filter(summary => !bots.includes(summary.uid) && summary.peak.verdict === 'spam')
     expect(real.filter(summary => !before.has(summary.uid))).toEqual([])
+  })
+
+  test('whole-second timestamps flag nobody through sub-second evidence', () => {
+    const detector = new Detector()
+    for (const message of wholeSeconds(messages)) detector.ingest(message)
+    const spam = detector.summaries().filter(summary => summary.peak.verdict === 'spam')
+    expect(spam.length).toBeLessThan(summaries.filter(summary => summary.peak.verdict === 'spam').length)
+    for (const summary of spam) {
+      expect(summary.peak.evidence.map(item => item.kind)).not.toContainAnyValues(['send-tick', 'lockstep'])
+    }
   })
 
   test('自动融入 bots injected into real traffic are judged blend spam, bar one held at suspect', () => {

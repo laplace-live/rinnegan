@@ -41,7 +41,7 @@ proof of automation**:
 | 固定节拍     | `setInterval`-style loops (6 s, 8.2 s, 10 s…), tolerant of skipped beats. Intervals near Bilibili's 5 s duplicate cooldown require a longer, tighter streak, since a human resending as soon as the cooldown clears looks regular too.                                                                                                                                                |
 | 重复次数抖动 | Burst tools that vary how many times a phrase is repeated per send (`爆了爆了爆了…`) to bypass deduplication.                                                                                                                                                                                                                                                                         |
 | 机器速度     | Sustaining the same line at ≤ 2.5 s intervals for 20+ sends—something Bilibili's filter only lets through when every send is mutated.                                                                                                                                                                                                                                                 |
-| 模板轮播     | Cycling through multiple lines on a single timer (multi-line templates or long text split into chunks).                                                                                                                                                                                                                                                                               |
+| 模板轮播     | Cycling through multiple lines on a single timer (multi-line templates or long text split into chunks), even a novel read out chunk by chunk that never repeats a line: 20+ long lines of the user's own in a row on one beat, with lines typed by hand in between.                                                                                                                   |
 | 插入字符     | Inserting a custom visible character (随机字符) at shifting positions.                                                                                                                                                                                                                                                                                                                |
 | 跟风触发     | Chatterbox 自动融入 (auto-blend): whenever the sender switches lines, the new line is the exact one that first reached 3 sends across 3 users after the bot's cooldown (see below).                                                                                                                                                                                                   |
 | 多号同步     | Several accounts running 自动融入 at once: they answer the same trigger, so each switches lines a steady few milliseconds from another account (see below).                                                                                                                                                                                                                           |
@@ -75,6 +75,20 @@ same line are counted together. Phrases spammed by much of the room reduce the w
 excuse automation signals. Scores range from 0 to 100: `spam` requires ≥ 90 **plus** automation evidence, while
 `suspect` starts at 60.
 
+A text read out on a timer never needs to repeat a line: the timer itself is the evidence. Rinnegan takes the beat
+that most gaps between a user's new lines share and follows the sends a beat apart, bridging a send or two Bilibili
+swallowed and the lines the user types by hand in between. 20 or more line changes in a row, across 10 or more
+different lines and mostly a single beat apart, are a tool reading out a text. Viewers who +1 the room or count 1, 2,
+3 as fast as Bilibili lets them keep time within a few percent too, so at least half the lines must be 8+ characters
+long, and at most a fifth of them sent by anyone else in the window.
+
+Timestamps are expected in milliseconds, as LAPLACE sources record them. A source that keeps whole seconds only, such
+as Bilibili's own record of a user's danmaku, is recognized per user: 发送节拍 and 多号同步 need sub-second timing and
+are skipped, while beats widen by up to a second (at most 15% of the beat, and for a repeated line only from 10 s up,
+past where anyone resending by hand keeps time). Replaying 25 stream days cut to whole seconds, spam verdicts the
+millisecond replay doesn't give fell from 94 user-days to 6; in exchange, most 自动融入 swarms and 1 s loops, which only
+sub-second evidence catches, stay at `suspect` there.
+
 Detected patterns: `loop` 循环独轮车, `burst` 爆发刷屏, `template` 模板轮播, `blend` 跟风机器人 (Chatterbox 自动融入 and
 other trend-following bots, whether character-jittered or trigger-timed), and `flood` 高频重复 (high-frequency
 repetition without automation evidence—reported, never banned).
@@ -93,10 +107,17 @@ the `session-end` audit event, and it never bans or exempts anyone.
 Calibrated against a real 89,970-message archive (5,725 users), checked against a second one (34,043 messages from a
 November 2026 stream day), and validated against simulated Chatterbox traffic:
 - Every Chatterbox evasion mode is caught in simulation: all invisible-character presets, throttled identical loops,
-  fixed and random intervals with 随机字符, multi-line templates, split long lines, custom visible characters,
-  paraphrase cycling, keyword replacement, Copy Ninja mirrors, and repeat-count burst tools. A random-interval loop
-  **without** 随机字符 is only flagged as `suspect`, since clamped Gaussian timing jitter alone is too close to human
-  pacing to justify a ban.
+  fixed and random intervals with 随机字符, multi-line templates, split long lines, novels read out chunk by chunk
+  every 1–60 s (by the 21st chunk, also with lines typed by hand in between), custom visible characters, paraphrase
+  cycling, keyword replacement, Copy Ninja mirrors, and repeat-count burst tools. A random-interval loop **without**
+  随机字符, or a text read out at random intervals, is at most flagged as `suspect`, since clamped Gaussian timing jitter
+  alone is too close to human pacing to justify a ban.
+- A 说书 account's own Bilibili danmaku records (4,968 danmaku over 23 days, in whole seconds) show novels cut into
+  20–40-character chunks every 8–40 s, with lines typed by hand in between. Each of its 17 reading stretches is now
+  caught as `template` spam; before, none was, and only two single-line loops were flagged, by send-tick fits that whole
+  seconds can't support. Replaying 25 stream days of real traffic (691,760 danmaku), no user's verdict changes on any day:
+  the heavy +1 user who sends a new line every ~4.6 s for minutes, and simulated viewers counting or +1-ing long lines as
+  fast as allowed, stay below `spam`.
 - 自动融入 injected into busy hours of the real archive is caught across every tested configuration but one: default
   settings, auto cooldown (with and without avoid-repeat), 30 s cooldown, a 10-character truncation limit, 2 s resends
   of truncated long lines, and high jittered latency. With a 4 s cooldown and a 29% random drop rate, its drops keep its

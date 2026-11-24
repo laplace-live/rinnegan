@@ -96,10 +96,12 @@ export interface Assessment {
   score: number
   verdict: Verdict
   pattern: Pattern
-  /** Excess repeats (messages beyond the first of each repeated line) inside the window, or {@link triggerHits} */
+  /** Excess repeats (messages beyond the first of each repeated line) inside the window, or as the flags below say */
   repeats: number
   /** `repeats` counts 自动融入 line switches (trigger hits, or switches in step with another account), not repeated messages */
   triggerHits?: boolean
+  /** `repeats` counts the sends one timer made, as a tool reading out a long text line by line does */
+  timedSends?: boolean
   /** User's messages inside the window */
   windowMessages: number
   /** 0..1 confidence behind the score, repetition volume included */

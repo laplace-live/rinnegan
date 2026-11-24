@@ -110,9 +110,18 @@ export function latticeThreshold(gaps: number): number {
   return 0.3 + 2 / Math.sqrt(Math.max(1, gaps))
 }
 
-/** Beat tolerance: ±5% or 200 ms, whichever is wider (network jitter dominates at short intervals). */
-function beatTolerance(beatMs: number): number {
-  return Math.max(beatMs * 0.05, 200)
+/** How far whole-second timestamps, as some Bilibili logs keep them, blur a gap: a 10.2 s timer reads 10 s and 11 s */
+export const COARSE_SLACK_MS = 1000
+/** Widest a beat tolerance gets with slack, as a share of the beat, so a coarse clock can't stretch it to fit anyone */
+const MAX_SLACK_SHARE = 0.15
+
+/**
+ * Beat tolerance: ±5% or 200 ms, whichever is wider (network jitter dominates at short intervals), plus `slackMs` for a
+ * coarse clock, up to 15% of the beat.
+ */
+function beatTolerance(beatMs: number, slackMs: number): number {
+  const tolerance = Math.max(beatMs * 0.05, 200)
+  return Math.max(tolerance, Math.min(tolerance + slackMs, beatMs * MAX_SLACK_SHARE))
 }
 
 /** Share of `gaps` within ±100 ms of a multiple of `tickMs`. */
@@ -126,8 +135,8 @@ export function latticeShare(gaps: readonly number[], tickMs: number): number {
   return on / gaps.length
 }
 
-/** Rhythm of `timestamps` (ms, ascending). */
-export function measureRhythm(timestamps: readonly number[]): Rhythm {
+/** Rhythm of `timestamps` (ms, ascending); `slackMs` widens the beat for a coarse clock. */
+export function measureRhythm(timestamps: readonly number[], slackMs = 0): Rhythm {
   const gaps: number[] = []
   for (let i = 1; i < timestamps.length; i++) {
     const gap = (timestamps[i] as number) - (timestamps[i - 1] as number)
@@ -138,7 +147,7 @@ export function measureRhythm(timestamps: readonly number[]): Rhythm {
   const beatMs = quantile(Float64Array.from(gaps).sort(), 0.5)
   const mean = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length
   const variance = gaps.reduce((sum, gap) => sum + (gap - mean) ** 2, 0) / gaps.length
-  const tolerance = beatTolerance(beatMs)
+  const tolerance = beatTolerance(beatMs, slackMs)
 
   let onBeat = 0
   let skipped = 0
@@ -159,4 +168,96 @@ export function measureRhythm(timestamps: readonly number[]): Rhythm {
     periodic: onBeatShare >= 0.6 ? (onBeat + skipped) / gaps.length : onBeatShare,
     banded: banded / gaps.length,
   }
+}
+
+/** Gaps shorter than this are bursts, not a timer's beat: chatterbox's send queue waits 1010 ms between sends */
+const MIN_PACE_MS = 1000
+/** Missed beats in a row a timed chain still bridges, such as sends Bilibili's filter swallowed */
+const MAX_SKIPPED_BEATS = 2
+
+/**
+ * The beat a timer keeps over `timestamps`: the median of the densest band of gaps within a beat tolerance either way.
+ * Sends slipped in between split a beat in two, which drags the plain median down but leaves this band alone.
+ */
+export function densestBeat(timestamps: readonly number[], slackMs = 0): number {
+  const gaps: number[] = []
+  for (let i = 1; i < timestamps.length; i++) {
+    const gap = (timestamps[i] as number) - (timestamps[i - 1] as number)
+    if (gap >= MIN_PACE_MS && gap <= MAX_RHYTHM_GAP_MS) gaps.push(gap)
+  }
+  const sorted = Float64Array.from(gaps).sort()
+  let best = 0
+  let lo = 0
+  for (let i = 0, j = 0; i < sorted.length; i++) {
+    while ((sorted[i] as number) - (sorted[j] as number) > 2 * beatTolerance(sorted[j] as number, slackMs)) j++
+    if (i - j + 1 > best) {
+      best = i - j + 1
+      lo = j
+    }
+  }
+  return quantile(sorted.subarray(lo, lo + best), 0.5)
+}
+
+/** Sends one timer made, as indices into the series. */
+export interface PacedChain {
+  /** Timed sends, oldest first */
+  timed: number[]
+  /** Timed sends a single beat after the previous one, not after missed beats */
+  onBeat: number
+  /** Other sends between the first timed send and the last */
+  extras: number
+  /** Timed sends whose `lines` entry differs from the previous one's; all but the first without `lines` */
+  switches: number
+}
+
+/**
+ * The chain of sends a beat apart (or a missed beat or two) that changes `lines` most often, longest without `lines`,
+ * skipping whatever is sent in between, such as lines typed by hand while a tool reads out a text. A best chain, not a
+ * greedy one, so a line typed close to a beat can't knock it off the timer. Null without any two sends on the beat.
+ */
+export function pacedChain(
+  timestamps: readonly number[],
+  beatMs: number,
+  slackMs = 0,
+  lines?: readonly unknown[]
+): PacedChain | null {
+  const n = timestamps.length
+  if (beatMs <= 0 || n < 2) return null
+  const tolerance = beatTolerance(beatMs, slackMs)
+  const reach = (MAX_SKIPPED_BEATS + 1) * beatMs + tolerance
+  const score = new Int32Array(n)
+  const onBeat = new Int32Array(n)
+  const offset = new Float64Array(n)
+  const prev = new Int32Array(n).fill(-1)
+  let best = -1
+  for (let j = 1; j < n; j++) {
+    const at = timestamps[j] as number
+    for (let i = j - 1; i >= 0; i--) {
+      const gap = at - (timestamps[i] as number)
+      if (gap > reach) break
+      const beats = Math.round(gap / beatMs)
+      const off = Math.abs(gap - beats * beatMs)
+      if (beats < 1 || off > tolerance) continue
+      const s = (score[i] as number) + (lines === undefined || lines[i] !== lines[j] ? 1 : 0)
+      const o = (onBeat[i] as number) + (beats === 1 ? 1 : 0)
+      const f = (offset[i] as number) + off
+      // More changes, then more single beats, then tighter timing: a timer's own sends fit best
+      const better =
+        prev[j] === -1 ||
+        s > (score[j] as number) ||
+        (s === score[j] && (o > (onBeat[j] as number) || (o === onBeat[j] && f < (offset[j] as number))))
+      if (!better) continue
+      score[j] = s
+      onBeat[j] = o
+      offset[j] = f
+      prev[j] = i
+    }
+    if (prev[j] !== -1 && (best === -1 || (score[j] as number) >= (score[best] as number))) best = j
+  }
+  if (best === -1) return null
+  const timed: number[] = []
+  for (let k = best; k !== -1; k = prev[k] as number) timed.push(k)
+  timed.reverse()
+  const extras = best - (timed[0] as number) + 1 - timed.length
+  return { timed, onBeat: onBeat[best] as number, extras, switches: score[best] as number }
 }

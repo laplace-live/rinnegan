@@ -51,6 +51,13 @@ describe('offline report', () => {
     expect(renderMarkdown(loop)).toContain('| 30 |')
   })
 
+  test('names a text read out on a timer as timed sends, not repeated messages', () => {
+    const reader = reportOf({ pattern: 'template', repeats: 278, timedSends: true })
+    expect(reader.users[0]?.timedSends).toBe(true)
+    expect(renderConsole(reader, CONSOLE)).toContain('定时发送 278 次')
+    expect(renderMarkdown(reader)).toContain('| 278（定时发送） |')
+  })
+
   test('lists 手动融入 viewers and tags a flagged one', () => {
     const copier = manualBlend()
     const chanter = manualBlend({ uid: 43, uname: 'fan', chants: 55, sources: 0, plusOneLagMs: null })

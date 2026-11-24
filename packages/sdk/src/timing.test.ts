@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import { seededRandom } from './testing/simulate.ts'
 import {
+  COARSE_SLACK_MS,
+  densestBeat,
   isLatticeGap,
   latticeShare,
   latticeThreshold,
@@ -9,6 +11,7 @@ import {
   measureLattice,
   measureRhythm,
   median,
+  pacedChain,
   quantile,
   scanLattice,
 } from './timing.ts'
@@ -56,6 +59,66 @@ describe('measureRhythm', () => {
     const rhythm = measureRhythm(series(gaps))
     expect(rhythm.banded).toBeGreaterThanOrEqual(0.9)
     expect(rhythm.onBeat).toBeLessThan(0.6)
+  })
+})
+
+describe('whole-second slack', () => {
+  // A 10.2 s timer read off a clock that keeps whole seconds only
+  const coarse = Array.from({ length: 30 }, (_, i) => Math.floor((i * 10_200 + 300) / 1000) * 1000)
+
+  test('keeps a timer periodic on whole seconds', () => {
+    expect(measureRhythm(coarse).periodic).toBeLessThan(0.85)
+    expect(measureRhythm(coarse, COARSE_SLACK_MS).periodic).toBe(1)
+  })
+
+  test('never widens the beat past 15%', () => {
+    // 3.3 s reads as 3 s and 4 s gaps; 1 s either way would be a third of the beat.
+    const fast = Array.from({ length: 30 }, (_, i) => Math.floor((i * 3300) / 1000) * 1000)
+    expect(measureRhythm(fast, COARSE_SLACK_MS).onBeat).toBeLessThan(0.8)
+  })
+})
+
+describe('paced chains', () => {
+  // A 10.2 s timer with a line typed by hand after every third send, and one send swallowed
+  const timer = Array.from({ length: 40 }, (_, i) => 5000 + i * 10_200 + ((i * 37) % 60)).filter((_, i) => i !== 20)
+  const typed = timer.filter((_, i) => i % 3 === 0).map(at => at + 4100)
+  const sends = [...timer, ...typed].sort((a, b) => a - b)
+  const gaps = sends.slice(1).map((at, i) => at - (sends[i] as number))
+
+  test('densestBeat finds the timer the median misses', () => {
+    expect(Math.abs(densestBeat(sends) - 10_200)).toBeLessThanOrEqual(60)
+    expect(median(gaps)).toBeLessThan(7000)
+  })
+
+  test('the chain follows the timer through the typed lines and the swallowed send', () => {
+    const chain = pacedChain(sends, densestBeat(sends))
+    expect(chain?.timed.map(i => sends[i])).toEqual(timer)
+    expect(chain?.onBeat).toBe(timer.length - 2)
+    expect(chain?.extras).toBe(typed.length)
+    expect(chain?.switches).toBe(timer.length - 1)
+  })
+
+  test('a line typed close to a beat does not knock the chain off the timer', () => {
+    // Typed 1.6 s early, then the timer's own send: a greedy pass would take the typed line and lose the beat
+    const chain = pacedChain([0, 40_000, 78_400, 80_000, 120_000, 160_000, 200_000], 40_000, COARSE_SLACK_MS)
+    expect(chain?.timed).toEqual([0, 1, 3, 4, 5, 6])
+    expect(chain?.extras).toBe(1)
+  })
+
+  test('counts line changes when given lines, and prefers the chain with more', () => {
+    const chain = pacedChain([0, 10_000, 20_000, 30_000, 40_000], 10_000, 0, ['a', 'a', 'b', 'c', 'c'])
+    expect(chain?.timed).toHaveLength(5)
+    expect(chain?.switches).toBe(2)
+  })
+
+  test('a pause longer than three beats ends a chain', () => {
+    const paused = [0, 10_000, 20_000, 30_000, 45_000, 78_000, 88_000, 98_000, 108_000, 118_000]
+    expect(pacedChain(paused, 10_000)?.timed).toEqual([5, 6, 7, 8, 9])
+  })
+
+  test('null with nothing on the beat', () => {
+    expect(pacedChain([0, 3000, 17_000], 10_000)).toBeNull()
+    expect(pacedChain([0], 10_000)).toBeNull()
   })
 })
 

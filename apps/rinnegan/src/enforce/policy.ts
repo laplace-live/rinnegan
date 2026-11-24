@@ -55,7 +55,8 @@ export function formatReason(template: string, assessment: Assessment, windowMs:
   const top = assessment.clusters[0]
   const sample = stripEvasionChars(top?.samples[0]?.text ?? top?.key ?? '').trim()
   const values: Record<string, string> = {
-    count: String(top?.count ?? assessment.repeats + 1),
+    // A text read out line by line sends each line once, so its count is the timed sends.
+    count: String(assessment.timedSends ? assessment.repeats : (top?.count ?? assessment.repeats + 1)),
     minutes: String(Math.round(windowMs / 60_000)),
     sample,
     pattern: PATTERN_LABELS[assessment.pattern],

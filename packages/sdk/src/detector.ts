@@ -23,6 +23,8 @@ import {
 } from './normalize.ts'
 import { boundedLevenshtein, fuzzyBudget, insertionJitter, sameChars, singleInsertion } from './similarity.ts'
 import {
+  COARSE_SLACK_MS,
+  densestBeat,
   EMPTY_RHYTHM,
   isLatticeGap,
   type Lattice,
@@ -32,6 +34,7 @@ import {
   measureLattice,
   measureRhythm,
   median,
+  pacedChain,
   type Rhythm,
 } from './timing.ts'
 
@@ -132,6 +135,7 @@ interface Candidate {
   /** Automation confidence; the evidence's weight */
   automation: number
   evidence: Evidence
+  /** Repeated lines it covers, which an assessment shows first when it wins */
   members: Set<ClusterEval>
   /** Set when winning decides the pattern */
   pattern?: Pattern
@@ -139,8 +143,10 @@ interface Candidate {
   supporting?: boolean
   /** `pattern` stands even when the candidate loses */
   decisive?: boolean
-  /** `repeats` counts 自动融入 line switches, not repeated messages */
-  switches?: boolean
+  /** What `repeats` counts instead of repeated messages: 自动融入 line switches, or sends one timer made */
+  counts?: 'switches' | 'timed'
+  /** Lines an assessment shows instead of `members` when it wins, latest first: its own sends, which needn't repeat */
+  shows?: Cluster[]
 }
 
 interface Cluster {
@@ -174,6 +180,8 @@ interface UserState {
   replay: TriggerReplay | null
   /** Key of the last countable send, to tell a line switch from a resend */
   lastLine: string | null
+  /** Every timestamp so far is a whole second, as some Bilibili logs record them: no sub-second timing to read */
+  coarse: boolean
 }
 
 const VERDICT_RANK: Record<Verdict, number> = { none: 0, suspect: 1, spam: 2 }
@@ -200,6 +208,16 @@ const LOCKSTEP_CORROBORATION = 0.5
 /** 自动融入 with 随机字符 moves on after a send or two, so its jitter shows across lines, not within one */
 const JITTERED_SENDS = 6
 const JITTERED_LINES = 5
+/** Line changes on one timer that prove a tool reading out a text; check-in tools stop after 10 lines */
+const PACED_SWITCHES = 20
+/** Different lines a paced run reads out; a short template comes round again, which the template cycle catches */
+const PACED_LINES = 10
+/** Share of a paced run's sends a single beat after the previous one, rather than after missed beats */
+const PACED_ON_BEAT = 0.8
+/** Median visible length of a paced run's lines: someone counting 1, 2, 3 as fast as allowed keeps time too */
+const PACED_LENGTH = 8
+/** Most of a paced run's lines that others in the room sent too: someone +1-ing line after line keeps time too */
+const PACED_COPIES = 0.2
 /** Lines an assessment shows */
 const SHOWN_CLUSTERS = 3
 
@@ -224,7 +242,7 @@ function candidate(
   found: Evidence,
   repeats: number,
   members: Set<ClusterEval>,
-  extra: Pick<Candidate, 'pattern' | 'supporting' | 'decisive' | 'switches'> = {}
+  extra: Omit<Candidate, 'repeats' | 'automation' | 'evidence' | 'members'> = {}
 ): Candidate {
   return { repeats, automation: found.weight, evidence: found, members, ...extra }
 }
@@ -272,6 +290,7 @@ export class Detector {
     const state = this.#state(message)
     // Live sources can deliver a few ms out of order; keep each user's timeline monotonic.
     const at = Math.max(message.timestamp, state.lastAt)
+    if (at % 1000 !== 0) state.coarse = false
     if (state.messages > 0) this.#recordSessionGap(state, at - state.lastAt)
     this.#prune(state, at)
 
@@ -360,6 +379,7 @@ export class Detector {
         fingerprintAge: 0,
         replay: null,
         lastLine: null,
+        coarse: true,
       }
       this.#users.set(id, state)
     }
@@ -380,8 +400,11 @@ export class Detector {
     this.#manual.observe(state.roomId, state.uid, state.uname, rec.key, text, rec.at)
     const send: ReplaySend = { at: rec.at, text, key: rec.key }
     const follows = tape.followsCrowd(send, state.uid)
-    // 自动融入 only ever switches to a line others are sending; pair such switches across accounts.
-    if (follows && rec.key !== state.lastLine) this.#lockstep.observe(state.roomId, state.uid, rec.key, rec.at)
+    // 自动融入 only ever switches to a line others are sending; pair such switches across accounts. A whole-second clock
+    // can't tell a 150 ms offset from chance.
+    if (follows && rec.key !== state.lastLine && !state.coarse) {
+      this.#lockstep.observe(state.roomId, state.uid, rec.key, rec.at)
+    }
     state.lastLine = rec.key
     if (state.replay) state.replay.observe(tape, send, follows)
     else if (follows) state.replay = new TriggerReplay(state.uid, send)
@@ -525,11 +548,22 @@ export class Detector {
     return this.options.cooldownFloorsMs.some(floor => beatMs >= floor - 100 && beatMs <= floor + 450)
   }
 
+  /**
+   * Rhythm of `recs`' send times, its beat widened for a whole-second clock once the beat is twice the slowest
+   * duplicate cooldown: below that, a human resending as soon as allowed keeps time within the slack too.
+   */
+  #rhythm(state: UserState, recs: readonly Rec[]): Rhythm {
+    const timestamps = recs.map(rec => rec.at)
+    const rhythm = measureRhythm(timestamps)
+    if (!state.coarse || this.options.cooldownFloorsMs.some(floor => rhythm.beatMs < 2 * floor)) return rhythm
+    return measureRhythm(timestamps, COARSE_SLACK_MS)
+  }
+
   #evaluateCluster(state: UserState, cluster: Cluster): ClusterEval {
     if (cluster.cached) return cluster.cached
     const recs = cluster.recs
     const n = recs.length
-    const rhythm = measureRhythm(recs.map(rec => rec.at))
+    const rhythm = this.#rhythm(state, recs)
     const found: Evidence[] = []
     const emote = recs.every(rec => rec.isEmote)
 
@@ -681,16 +715,21 @@ export class Detector {
     let repeats = best?.repeats ?? 0
     let automation = best?.automation ?? 0
     let members = new Set(best ? [best] : [])
-    let pattern: Pattern | undefined
+    let winner: Candidate | undefined
     let decided: Pattern | undefined
-    let triggerHits = false
     const lead: Evidence[] = []
     // One tool tick drives every line a looper sends, so the lattice is fitted on all their repeated lines at once.
-    // Asked even without a repeated line: the session fingerprint refits on these calls.
-    const tick = this.#sendTick(evaluations) ?? this.#fingerprintTick(state, evaluations)
+    // Asked even without a repeated line: the session fingerprint refits on these calls. Whole seconds fit no tick.
+    const tick = state.coarse ? null : (this.#sendTick(evaluations) ?? this.#fingerprintTick(state, evaluations))
     // A blend bot may never repeat a line inside the window, so its replay competes even without a repeated line.
     const trigger = this.#trendTrigger(state, evaluations)
-    const others = [this.#templateCycle(state, evaluations), tick, trigger, this.#jitteredLines(state, evaluations)]
+    const others = [
+      this.#templateCycle(state, evaluations),
+      this.#pacedLines(state),
+      tick,
+      trigger,
+      this.#jitteredLines(state, evaluations),
+    ]
     const backed = () =>
       automationProof([...others.flatMap(option => (option ? [option.evidence] : [])), ...(best?.evidence ?? [])]) >=
       LOCKSTEP_CORROBORATION
@@ -699,8 +738,8 @@ export class Detector {
       if (!option) continue
       const wins = this.#score(option.repeats, option.automation) > this.#score(repeats, automation)
       if (wins) {
-        ;({ repeats, automation, members, pattern } = option)
-        triggerHits = option.switches === true
+        ;({ repeats, automation, members } = option)
+        winner = option
       }
       if (wins || option.supporting) lead.unshift(option.evidence)
       if (option.decisive) decided = option.pattern
@@ -735,14 +774,17 @@ export class Detector {
       at,
       score,
       verdict,
-      pattern: decided ?? pattern ?? (best ? this.#classify(state, best, found) : 'loop'),
+      pattern: decided ?? winner?.pattern ?? (best ? this.#classify(state, best, found) : 'loop'),
       repeats,
-      ...(triggerHits ? { triggerHits } : {}),
+      ...(winner?.counts === 'switches' ? { triggerHits: true } : {}),
+      ...(winner?.counts === 'timed' ? { timedSends: true } : {}),
       windowMessages: state.records.length,
       automation: Math.round(automation * 1000) / 1000,
       proof: Math.round(proof * 1000) / 1000,
       evidence: found.sort((a, b) => b.weight - a.weight),
-      clusters: this.#shownClusters(state, shown, verdict),
+      clusters: winner?.shows
+        ? winner.shows.slice(0, SHOWN_CLUSTERS).map(cluster => this.#clusterSummary(state, cluster))
+        : this.#shownClusters(state, shown, verdict),
       userType: message.userType,
       guardType: message.guardType,
       medalLevel: message.medalLevel,
@@ -759,6 +801,12 @@ export class Detector {
       clusters.push(this.#summarize(state, cluster, EMPTY_RHYTHM))
     }
     return clusters
+  }
+
+  #clusterSummary(state: UserState, cluster: Cluster): ClusterSummary {
+    return cluster.recs.length >= 2
+      ? this.#evaluateCluster(state, cluster).summary
+      : this.#summarize(state, cluster, EMPTY_RHYTHM)
   }
 
   /** Repeated lines whose own gaps sit on `tickMs`: the lines the tool is sending. */
@@ -837,7 +885,12 @@ export class Detector {
     )
     const members = new Set(evaluations.filter(evaluation => fit.keys.has(evaluation.summary.key)))
     // Sends timed by the room's trends make a blend bot, whatever timer or template its lines also fit.
-    return candidate(found, fit.hits, members, { pattern: 'blend', supporting: true, decisive: strong, switches: true })
+    return candidate(found, fit.hits, members, {
+      pattern: 'blend',
+      supporting: true,
+      decisive: strong,
+      counts: 'switches',
+    })
   }
 
   /**
@@ -861,7 +914,7 @@ export class Detector {
       pattern: 'blend',
       supporting: true,
       decisive: !weak,
-      switches: true,
+      counts: 'switches',
     })
   }
 
@@ -900,7 +953,7 @@ export class Detector {
     const covered = lines.reduce((sum, evaluation) => sum + evaluation.summary.count, 0)
     const share = covered / state.records.length
     if (share < 0.75) return null
-    const rhythm = measureRhythm(state.records.map(rec => rec.at))
+    const rhythm = this.#rhythm(state, state.records)
     if (rhythm.gaps < 12) return null
     const atFloor = this.#isAtFloor(rhythm.beatMs)
     const needed = atFloor ? 0.95 : 0.85
@@ -914,6 +967,42 @@ export class Detector {
     )
     const repeats = lines.reduce((sum, evaluation) => sum + evaluation.repeats, 0)
     return candidate(found, repeats, new Set(lines), { pattern: 'template' })
+  }
+
+  /**
+   * One timer moving through many lines, none of which needs to come round again inside the window: a novel or a long
+   * template read out chunk by chunk (说书), with lines typed by hand in between.
+   */
+  #pacedLines(state: UserState): Candidate | null {
+    if (state.records.length <= PACED_SWITCHES || state.clusters.size < PACED_LINES) return null
+    const recs = state.records.filter(rec => !rec.isEmote)
+    // Half the timed sends must be long lines, and a line is never longer in chars than in UTF-16 units: a cheap bound.
+    const long = recs.filter(rec => rec.raw.length >= PACED_LENGTH).length
+    if (recs.length <= PACED_SWITCHES || long <= PACED_SWITCHES / 2) return null
+    // A loop running alongside would set the beat with its resends, so only lines new to the window count toward it.
+    const fresh = recs.filter(rec => rec.cluster.recs[0] === rec).map(rec => rec.at)
+    const ats = recs.map(rec => rec.at)
+    const clusters = recs.map(rec => rec.cluster)
+    // Lines typed in between have no cooldown to pace them, so a coarse clock widens any beat.
+    const slack = state.coarse ? COARSE_SLACK_MS : 0
+    const beat = densestBeat(fresh, slack)
+    const chain = pacedChain(ats, beat, slack, clusters)
+    if (!chain || chain.switches < PACED_SWITCHES || chain.onBeat < PACED_ON_BEAT * (chain.timed.length - 1)) {
+      return null
+    }
+    const timed = chain.timed.map(i => recs[i] as Rec)
+    if (median(timed.map(visibleLength)) < PACED_LENGTH) return null
+    // Latest first, as an assessment shows them
+    const lines = [...new Set(timed.map(rec => rec.cluster).reverse())]
+    if (lines.length < PACED_LINES) return null
+    const copies = timed.filter(rec => this.#crowd.others(state.roomId, rec.key, state.uid) > 0).length
+    if (copies > PACED_COPIES * timed.length) return null
+    const found = evidence(
+      'template-cycle',
+      0.9,
+      `${timed.length} 条长句按 ${seconds(beat)} 节拍逐条发送，${lines.length} 种内容${chain.extras > 0 ? `，其间另发 ${chain.extras} 条` : ''}`
+    )
+    return candidate(found, timed.length, new Set(), { pattern: 'template', counts: 'timed', shows: lines })
   }
 
   #classify(state: UserState, best: ClusterEval, found: Evidence[]): Pattern {
