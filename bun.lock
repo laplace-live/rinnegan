@@ -11,7 +11,7 @@
     },
     "apps/rinnegan": {
       "name": "@laplace.live/rinnegan",
-      "version": "0.5.1",
+      "version": "0.6.0",
       "bin": {
         "rinnegan": "dist/cli.js",
       },
@@ -30,7 +30,7 @@
     },
     "packages/sdk": {
       "name": "@laplace.live/rinnegan-sdk",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "devDependencies": {
         "@laplace.live/event-types": "^2.0.21",
         "@types/bun": "latest",

@@ -1,5 +1,15 @@
 # @laplace.live/rinnegan-sdk
 
+## 0.3.0
+
+### Minor Changes
+
+- aefa9c8: Catch 独轮车 that read out a novel line by line on a timer, even when no line repeats
+
+### Patch Changes
+
+- aefa9c8: Stop timing evidence from flagging viewers when danmaku times are whole seconds
+
 ## 0.2.0
 
 ### Minor Changes
