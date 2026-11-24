@@ -1,6 +1,6 @@
 {
   "name": "@laplace.live/rinnegan-sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Detect 独轮车 (looped duplicate danmaku) in Bilibili Live chat: the detector behind LAPLACE Rinnegan",
   "keywords": [
     "bilibili",
