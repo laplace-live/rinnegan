@@ -24,18 +24,20 @@ import {
 import { boundedLevenshtein, fuzzyBudget, insertionJitter, sameChars, singleInsertion } from './similarity.ts'
 import {
   COARSE_SLACK_MS,
-  densestBeat,
   EMPTY_RHYTHM,
   isLatticeGap,
   type Lattice,
   latticeShare,
   latticeThreshold,
+  likelyBeats,
   MIN_LATTICE_GAPS,
   measureLattice,
   measureRhythm,
   median,
   pacedChain,
   type Rhythm,
+  steadyStretch,
+  tightShare,
 } from './timing.ts'
 
 export interface DetectorOptions {
@@ -214,6 +216,10 @@ const PACED_SWITCHES = 20
 const PACED_LINES = 10
 /** Share of a paced run's sends a single beat after the previous one, rather than after missed beats */
 const PACED_ON_BEAT = 0.8
+/** Share of a paced run's single-beat gaps within a timer's spread of each other; chance chains fill the tolerance */
+const PACED_TIGHT = 0.9
+/** Beats tried, likeliest first: lines typed at one offset can make three bands of gaps equally dense */
+const PACED_BEATS = 3
 /** Median visible length of a paced run's lines: someone counting 1, 2, 3 as fast as allowed keeps time too */
 const PACED_LENGTH = 8
 /** Most of a paced run's lines that others in the room sent too: someone +1-ing line after line keeps time too */
@@ -983,24 +989,32 @@ export class Detector {
     const fresh = recs.filter(rec => rec.cluster.recs[0] === rec).map(rec => rec.at)
     const ats = recs.map(rec => rec.at)
     const clusters = recs.map(rec => rec.cluster)
-    // Lines typed in between have no cooldown to pace them, so a coarse clock widens any beat.
+    // Lines typed in between have no cooldown to pace them, so a coarse clock widens any beat. It also leaves room for
+    // chance chains, so it gets the likeliest beat and the whole chain only, not the runners-up and steadiest stretch.
     const slack = state.coarse ? COARSE_SLACK_MS : 0
-    const beat = densestBeat(fresh, slack)
-    const chain = pacedChain(ats, beat, slack, clusters)
-    if (!chain || chain.switches < PACED_SWITCHES || chain.onBeat < PACED_ON_BEAT * (chain.timed.length - 1)) {
-      return null
+    let best: { timed: Rec[]; lines: Cluster[]; beat: number; switches: number; extras: number } | null = null
+    for (const beat of likelyBeats(fresh, slack, state.coarse ? 1 : PACED_BEATS)) {
+      const longest = pacedChain(ats, beat, slack, clusters)
+      // No stretch of it can change lines or keep the beat more often than the whole chain does
+      if (!longest || longest.switches < PACED_SWITCHES || longest.onBeat < PACED_ON_BEAT * PACED_SWITCHES) continue
+      const chain = steadyStretch(longest, ats, beat, PACED_ON_BEAT, clusters, !state.coarse)
+      if (!chain || chain.switches < PACED_SWITCHES || (best && chain.switches <= best.switches)) continue
+      if (tightShare(chain, ats, beat, slack) < PACED_TIGHT) continue
+      const timed = chain.timed.map(i => recs[i] as Rec)
+      if (median(timed.map(visibleLength)) < PACED_LENGTH) continue
+      // Latest first, as an assessment shows them
+      const lines = [...new Set(timed.map(rec => rec.cluster).reverse())]
+      if (lines.length < PACED_LINES) continue
+      const copies = timed.filter(rec => this.#crowd.others(state.roomId, rec.key, state.uid) > 0).length
+      if (copies > PACED_COPIES * timed.length) continue
+      best = { timed, lines, beat, switches: chain.switches, extras: chain.extras }
     }
-    const timed = chain.timed.map(i => recs[i] as Rec)
-    if (median(timed.map(visibleLength)) < PACED_LENGTH) return null
-    // Latest first, as an assessment shows them
-    const lines = [...new Set(timed.map(rec => rec.cluster).reverse())]
-    if (lines.length < PACED_LINES) return null
-    const copies = timed.filter(rec => this.#crowd.others(state.roomId, rec.key, state.uid) > 0).length
-    if (copies > PACED_COPIES * timed.length) return null
+    if (!best) return null
+    const { timed, lines, beat, extras } = best
     const found = evidence(
       'template-cycle',
       0.9,
-      `${timed.length} 条长句按 ${seconds(beat)} 节拍逐条发送，${lines.length} 种内容${chain.extras > 0 ? `，其间另发 ${chain.extras} 条` : ''}`
+      `${timed.length} 条长句按 ${seconds(beat)} 节拍逐条发送，${lines.length} 种内容${extras > 0 ? `，其间另发 ${extras} 条` : ''}`
     )
     return candidate(found, timed.length, new Set(), { pattern: 'template', counts: 'timed', shows: lines })
   }

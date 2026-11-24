@@ -255,7 +255,8 @@ describe('chatterbox 独轮车 is caught', () => {
       expect(peak?.verdict).toBe('spam')
       expect(peak?.pattern).toBe('template')
       expect(peak?.timedSends).toBe(true)
-      // `repeats` counts every timed send, as the evidence does
+      // Every chunk in the window is a timed send, and `repeats` and the evidence count them all
+      expect(peak?.repeats).toBe(peak?.windowMessages)
       expect(peak?.evidence.find(item => item.kind === 'template-cycle')?.detail).toStartWith(`${peak?.repeats} 条长句`)
       expect(spamAfter).toBeLessThanOrEqual(22)
     })
@@ -268,11 +269,15 @@ describe('chatterbox 独轮车 is caught', () => {
       expect(peak?.evidence.find(item => item.kind === 'template-cycle')?.detail).toContain('其间另发')
     })
 
-    test('shows the chunks it read last', () => {
+    test('shows the chunks it read last, not the lines typed in between', () => {
       const chunks = readNovel(122, 10, 35)
+      // A repeated line of the user's own, which an assessment otherwise shows first
+      const typed = chunks.filter((_, i) => i % 7 === 3).map(chunk => say(122, '？', chunk.timestamp + 4000))
       const detector = new Detector()
       let last: Assessment | undefined
-      for (const message of chunks) last = detector.ingest(message).assessment
+      for (const message of mergeStreams(chunks, typed))
+        if (message.text !== '？') last = detector.ingest(message).assessment
+        else detector.ingest(message)
       expect(last?.clusters.map(cluster => cluster.samples[0]?.text)).toEqual(
         chunks
           .slice(-3)
@@ -285,6 +290,33 @@ describe('chatterbox 独轮车 is caught', () => {
       // The chant's resends would set the beat at ~9 s; the chunks keep theirs.
       const chant = simulateHumanChant({ persona: persona(124), line: '流汗', startAt: T0, sends: 200 })
       const { peak } = judge(mergeStreams(readNovel(124, 35, 40), chant), 124)
+      expect(peak?.verdict).toBe('spam')
+      expect(peak?.timedSends).toBe(true)
+    })
+
+    test('with a line of their own typed 3 s after every other chunk', () => {
+      // Gaps of 3, 7 and 10 s come up equally often, so the densest band of gaps needn't be the timer's beat
+      const chunks = simulateFixedTimer({
+        persona: persona(125),
+        texts: novelText(60, seededRandom(125)).split('\n'),
+        startAt: T0,
+        sends: 60,
+        intervalMs: 10_000,
+      })
+      const own = novelText(30, seededRandom(126)).split('\n')
+      const typed = chunks
+        .filter((_, i) => i % 2 === 0)
+        .map((chunk, i) => say(125, (own[i] as string).slice(0, 12), chunk.timestamp + 3000))
+      expect(judge(mergeStreams(chunks, typed), 125).peak?.verdict).toBe('spam')
+    })
+
+    test('that sped up from 20 s to 10 s', () => {
+      // One chain through both speeds is mostly missed beats, and the 20 s beat finds too few changes; the fast part
+      // alone is on its beat
+      const lines = novelText(29, seededRandom(127)).split('\n')
+      const slow = lines.slice(0, 8).map((line, i) => say(127, line, T0 + i * 20_000))
+      const fast = lines.slice(8).map((line, i) => say(127, line, T0 + 150_000 + i * 10_000))
+      const { peak } = judge([...slow, ...fast], 127)
       expect(peak?.verdict).toBe('spam')
       expect(peak?.timedSends).toBe(true)
     })
@@ -665,18 +697,22 @@ describe('whole-second timestamps', () => {
     }
   })
 
-  test('chatting long lines of their own every few seconds stays below spam', () => {
-    // A best chain may skip a beat or two, which whole seconds leave room to fit by chance
-    for (let seed = 1; seed <= 40; seed++) {
+  // A best chain may skip a beat or two, which whole seconds leave room to fit by chance. The listed seeds did: at 3 s
+  // through a runner-up beat or a steady stretch, at 6 s with gaps spread over the whole tolerance.
+  test.each([
+    [3, [4, 7, 23, 49]],
+    [6, [162, 171]],
+  ])('chatting long lines of their own every ~%d s stays below spam', (medianSec, chancy) => {
+    for (const seed of [...chancy, ...Array.from({ length: 30 }, (_, i) => i + 1)]) {
       const random = seededRandom(seed)
       const chat: ChatMessage[] = []
       let at = T0
       for (const line of novelText(300, random).split('\n')) {
-        // Log-normal gaps around 6 s, σ 0.5 from a sum of three uniforms
-        at += Math.max(1500, 6000 * Math.exp(random() + random() + random() - 1.5))
+        // Log-normal gaps, σ 0.5 from a sum of three uniforms
+        at += Math.max(1500, medianSec * 1000 * Math.exp(random() + random() + random() - 1.5))
         chat.push(say(133, line.slice(0, 30), at))
       }
-      expect(judge(wholeSeconds(chat), 133).peak?.verdict).not.toBe('spam')
+      expect([seed, judge(wholeSeconds(chat), 133).peak?.verdict]).not.toEqual([seed, 'spam'])
     }
   })
 

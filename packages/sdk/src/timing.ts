@@ -176,26 +176,38 @@ const MIN_PACE_MS = 1000
 const MAX_SKIPPED_BEATS = 2
 
 /**
- * The beat a timer keeps over `timestamps`: the median of the densest band of gaps within a beat tolerance either way.
- * Sends slipped in between split a beat in two, which drags the plain median down but leaves this band alone.
+ * Beats a timer behind `timestamps` may keep, likeliest first: medians of the densest bands of gaps, each a beat
+ * tolerance either way, up to `count` that share no gap. Lines slipped in between split a beat, so bands can tie.
  */
-export function densestBeat(timestamps: readonly number[], slackMs = 0): number {
+export function likelyBeats(timestamps: readonly number[], slackMs = 0, count = 3): number[] {
   const gaps: number[] = []
   for (let i = 1; i < timestamps.length; i++) {
     const gap = (timestamps[i] as number) - (timestamps[i - 1] as number)
     if (gap >= MIN_PACE_MS && gap <= MAX_RHYTHM_GAP_MS) gaps.push(gap)
   }
   const sorted = Float64Array.from(gaps).sort()
-  let best = 0
-  let lo = 0
+  // The widest band ending at each gap starts at `start[i]` in `sorted`
+  const start = new Int32Array(sorted.length)
   for (let i = 0, j = 0; i < sorted.length; i++) {
     while ((sorted[i] as number) - (sorted[j] as number) > 2 * beatTolerance(sorted[j] as number, slackMs)) j++
-    if (i - j + 1 > best) {
-      best = i - j + 1
-      lo = j
-    }
+    start[i] = j
   }
-  return quantile(sorted.subarray(lo, lo + best), 0.5)
+  const beats: number[] = []
+  const picked: number[] = []
+  while (beats.length < count) {
+    let end = -1
+    for (let i = 0; i < sorted.length; i++) {
+      const from = start[i] as number
+      // Densest first, the lowest of equals; a band sharing a gap with one already taken is out
+      if (end !== -1 && i - from <= end - (start[end] as number)) continue
+      if (picked.some(other => from <= other && (start[other] as number) <= i)) continue
+      end = i
+    }
+    if (end === -1) break
+    picked.push(end)
+    beats.push(quantile(sorted.subarray(start[end] as number, end + 1), 0.5))
+  }
+  return beats
 }
 
 /** Sends one timer made, as indices into the series. */
@@ -211,9 +223,8 @@ export interface PacedChain {
 }
 
 /**
- * The chain of sends a beat apart (or a missed beat or two) that changes `lines` most often, longest without `lines`,
- * skipping whatever is sent in between, such as lines typed by hand while a tool reads out a text. A best chain, not a
- * greedy one, so a line typed close to a beat can't knock it off the timer. Null without any two sends on the beat.
+ * The best chain of sends a beat apart (or a missed beat or two) by line changes, or by length without `lines`, skipping
+ * sends in between such as lines typed by hand: a best chain, so one typed near a beat can't knock it off the timer.
  */
 export function pacedChain(
   timestamps: readonly number[],
@@ -224,35 +235,47 @@ export function pacedChain(
   const n = timestamps.length
   if (beatMs <= 0 || n < 2) return null
   const tolerance = beatTolerance(beatMs, slackMs)
-  const reach = (MAX_SKIPPED_BEATS + 1) * beatMs + tolerance
   const score = new Int32Array(n)
   const onBeat = new Int32Array(n)
   const offset = new Float64Array(n)
   const prev = new Int32Array(n).fill(-1)
+  // More changes, then more single beats, then tighter timing than the chain ending at `k`: a timer's own sends fit best
+  const ahead = (s: number, o: number, f: number, k: number) =>
+    s > (score[k] as number) ||
+    (s === score[k] && (o > (onBeat[k] as number) || (o === onBeat[k] && f < (offset[k] as number))))
+  // Sends `beats` beats before the current one lie in [lo, hi); both bounds only move forward
+  const lo = new Int32Array(MAX_SKIPPED_BEATS + 2)
+  const hi = new Int32Array(MAX_SKIPPED_BEATS + 2)
   let best = -1
   for (let j = 1; j < n; j++) {
     const at = timestamps[j] as number
-    for (let i = j - 1; i >= 0; i--) {
-      const gap = at - (timestamps[i] as number)
-      if (gap > reach) break
-      const beats = Math.round(gap / beatMs)
-      const off = Math.abs(gap - beats * beatMs)
-      if (beats < 1 || off > tolerance) continue
-      const s = (score[i] as number) + (lines === undefined || lines[i] !== lines[j] ? 1 : 0)
-      const o = (onBeat[i] as number) + (beats === 1 ? 1 : 0)
-      const f = (offset[i] as number) + off
-      // More changes, then more single beats, then tighter timing: a timer's own sends fit best
-      const better =
-        prev[j] === -1 ||
-        s > (score[j] as number) ||
-        (s === score[j] && (o > (onBeat[j] as number) || (o === onBeat[j] && f < (offset[j] as number))))
-      if (!better) continue
-      score[j] = s
-      onBeat[j] = o
-      offset[j] = f
-      prev[j] = i
+    for (let beats = 1; beats <= MAX_SKIPPED_BEATS + 1; beats++) {
+      const target = at - beats * beatMs
+      while ((lo[beats] as number) < j && (timestamps[lo[beats] as number] as number) < target - tolerance) {
+        lo[beats] = (lo[beats] as number) + 1
+      }
+      if ((hi[beats] as number) < (lo[beats] as number)) hi[beats] = lo[beats] as number
+      while ((hi[beats] as number) < j && (timestamps[hi[beats] as number] as number) <= target + tolerance) {
+        hi[beats] = (hi[beats] as number) + 1
+      }
+      for (let i = (hi[beats] as number) - 1; i >= (lo[beats] as number); i--) {
+        const s = (score[i] as number) + (lines === undefined || lines[i] !== lines[j] ? 1 : 0)
+        const o = (onBeat[i] as number) + (beats === 1 ? 1 : 0)
+        const f = (offset[i] as number) + Math.abs((timestamps[i] as number) - target)
+        if (prev[j] !== -1 && !ahead(s, o, f, j)) continue
+        score[j] = s
+        onBeat[j] = o
+        offset[j] = f
+        prev[j] = i
+      }
     }
-    if (prev[j] !== -1 && (best === -1 || (score[j] as number) >= (score[best] as number))) best = j
+    // Later chains win ties
+    if (
+      prev[j] !== -1 &&
+      (best === -1 || !ahead(score[best] as number, onBeat[best] as number, offset[best] as number, j))
+    ) {
+      best = j
+    }
   }
   if (best === -1) return null
   const timed: number[] = []
@@ -260,4 +283,75 @@ export function pacedChain(
   timed.reverse()
   const extras = best - (timed[0] as number) + 1 - timed.length
   return { timed, onBeat: onBeat[best] as number, extras, switches: score[best] as number }
+}
+
+/**
+ * `chain` if at least `share` of its links are single beats, else (with `trim`) its stretch with the most line changes
+ * that is: a timer that sped up from twice the beat joins the chain through missed beats, which would sink the whole run.
+ */
+export function steadyStretch(
+  chain: PacedChain,
+  timestamps: readonly number[],
+  beatMs: number,
+  share: number,
+  lines?: readonly unknown[],
+  trim = true
+): PacedChain | null {
+  const { timed } = chain
+  const links = timed.length - 1
+  if (chain.onBeat >= share * links) return chain
+  if (!trim) return null
+  const single = new Int32Array(links + 1)
+  const changes = new Int32Array(links + 1)
+  for (let k = 1; k <= links; k++) {
+    const from = timed[k - 1] as number
+    const to = timed[k] as number
+    const gap = (timestamps[to] as number) - (timestamps[from] as number)
+    single[k] = (single[k - 1] as number) + (Math.round(gap / beatMs) === 1 ? 1 : 0)
+    changes[k] = (changes[k - 1] as number) + (lines === undefined || lines[from] !== lines[to] ? 1 : 0)
+  }
+  // Sends timed[a..b], by most changes, later on ties
+  let a0 = -1
+  let b0 = -1
+  for (let a = 0; a < links; a++) {
+    for (let b = a + 1; b <= links; b++) {
+      if ((single[b] as number) - (single[a] as number) < share * (b - a)) continue
+      const c = (changes[b] as number) - (changes[a] as number)
+      if (a0 === -1 || c >= (changes[b0] as number) - (changes[a0] as number)) {
+        a0 = a
+        b0 = b
+      }
+    }
+  }
+  if (a0 === -1) return null
+  const stretch = timed.slice(a0, b0 + 1)
+  return {
+    timed: stretch,
+    onBeat: (single[b0] as number) - (single[a0] as number),
+    extras: (stretch[stretch.length - 1] as number) - (stretch[0] as number) + 1 - stretch.length,
+    switches: (changes[b0] as number) - (changes[a0] as number),
+  }
+}
+
+/** How far apart a timer's single-beat gaps spread at most: chatterbox's ±40 ms request jitter, plus network spikes */
+const TIMER_SPREAD_MS = 400
+
+/**
+ * Share of `chain`'s single-beat gaps inside the tightest window `TIMER_SPREAD_MS` plus `slackMs` wide: a timer's land
+ * within a few hundred ms (two neighbouring whole seconds on a coarse clock), while a chance chain fills its tolerance.
+ */
+export function tightShare(chain: PacedChain, timestamps: readonly number[], beatMs: number, slackMs = 0): number {
+  const gaps: number[] = []
+  for (let k = 1; k < chain.timed.length; k++) {
+    const gap = (timestamps[chain.timed[k] as number] as number) - (timestamps[chain.timed[k - 1] as number] as number)
+    if (Math.round(gap / beatMs) === 1) gaps.push(gap)
+  }
+  if (gaps.length === 0) return 0
+  gaps.sort((a, b) => a - b)
+  let most = 0
+  for (let i = 0, j = 0; i < gaps.length; i++) {
+    while ((gaps[i] as number) - (gaps[j] as number) > TIMER_SPREAD_MS + slackMs) j++
+    most = Math.max(most, i - j + 1)
+  }
+  return most / gaps.length
 }

@@ -75,19 +75,22 @@ same line are counted together. Phrases spammed by much of the room reduce the w
 excuse automation signals. Scores range from 0 to 100: `spam` requires ≥ 90 **plus** automation evidence, while
 `suspect` starts at 60.
 
-A text read out on a timer never needs to repeat a line: the timer itself is the evidence. Rinnegan takes the beat
-that most gaps between a user's new lines share and follows the sends a beat apart, bridging a send or two Bilibili
-swallowed and the lines the user types by hand in between. 20 or more line changes in a row, across 10 or more
-different lines and mostly a single beat apart, are a tool reading out a text. Viewers who +1 the room or count 1, 2,
-3 as fast as Bilibili lets them keep time within a few percent too, so at least half the lines must be 8+ characters
-long, and at most a fifth of them sent by anyone else in the window.
+A text read out on a timer never needs to repeat a line: the timer itself is the evidence. Rinnegan tries the three
+beats that gaps between a user's new lines share most, since lines typed at one offset can make several equally
+common, and follows the sends a beat apart, bridging a send or two Bilibili swallowed and the lines typed by hand in
+between; when a timer sped up from twice its beat, the stretch after it counts. 20 or more line changes in a row,
+across 10 or more different lines, mostly a single beat apart and nearly all within 400 ms of each other, are a tool
+reading out a text. Viewers who +1 the room or count 1, 2, 3 as fast as Bilibili lets them keep time within a few
+percent too, so at least half the lines must be 8+ characters long, and at most a fifth of them sent by anyone else in
+the window.
 
 Timestamps are expected in milliseconds, as LAPLACE sources record them. A source that keeps whole seconds only, such
 as Bilibili's own record of a user's danmaku, is recognized per user: 发送节拍 and 多号同步 need sub-second timing and
 are skipped, while beats widen by up to a second (at most 15% of the beat, and for a repeated line only from 10 s up,
-past where anyone resending by hand keeps time). Replaying 25 stream days cut to whole seconds, spam verdicts the
-millisecond replay doesn't give fell from 94 user-days to 6; in exchange, most 自动融入 swarms and 1 s loops, which only
-sub-second evidence catches, stay at `suspect` there.
+past where anyone resending by hand keeps time). That room lets chance chains through, so a text read out on such a
+clock gets only the likeliest beat and the whole run, whose single beats must read as two neighbouring seconds.
+Replaying 25 stream days cut to whole seconds, spam verdicts the millisecond replay doesn't give fell from 94 user-days
+to 6; in exchange, most 自动融入 swarms and 1 s loops, which only sub-second evidence catches, stay at `suspect` there.
 
 Detected patterns: `loop` 循环独轮车, `burst` 爆发刷屏, `template` 模板轮播, `blend` 跟风机器人 (Chatterbox 自动融入 and
 other trend-following bots, whether character-jittered or trigger-timed), and `flood` 高频重复 (high-frequency

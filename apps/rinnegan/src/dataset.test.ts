@@ -286,9 +286,10 @@ describe.skipIf(!available)(`real archive ${ARCHIVE}`, () => {
   test('whole-second timestamps flag nobody through sub-second evidence', () => {
     const detector = new Detector()
     for (const message of wholeSeconds(messages)) detector.ingest(message)
-    const spam = detector.summaries().filter(summary => summary.peak.verdict === 'spam')
+    const flagged = detector.summaries()
+    const spam = flagged.filter(summary => summary.peak.verdict === 'spam')
     expect(spam.length).toBeLessThan(summaries.filter(summary => summary.peak.verdict === 'spam').length)
-    for (const summary of spam) {
+    for (const summary of flagged) {
       expect(summary.peak.evidence.map(item => item.kind)).not.toContainAnyValues(['send-tick', 'lockstep'])
     }
   })
